@@ -1,0 +1,33 @@
+[package]
+name = "zkptrans"
+version = "0.1.0"
+authors = ["rampenke <rampenke@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+storage-proofs = { version = "^0.4", path = "../rust-fil-proofs/storage-proofs" }
+bitvec = "0.11"
+chrono = "0.4"
+rand = "0.4"
+failure = "0.1"
+lazy_static = "1.2"
+memmap = "0.7"
+colored = "1.6"
+pbr = "1.0"
+tempfile = "3"
+byteorder = "1"
+itertools = "0.8"
+serde_cbor = "0.9.0"
+serde = { version = "1", features = ["rc", "derive"] }
+serde_json = "1.0"
+slog = { version = "2.4.1", features = ["max_level_trace", "release_max_level_trace"] }
+regex = "1"
+blake2b_simd = "0.5"
+phase21 = "0.3"
+bellperson = "0.2"
+paired = "0.15"
+fil-sapling-crypto = "0.1"
+clap = "2"
+ff = "0.4.0"
+logging-toolkit = { version = "^0.4", path = "../rust-fil-proofs/logging-toolkit" }
+merkletree = "0.7.1"
