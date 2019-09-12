@@ -8,6 +8,25 @@ use bellperson::{ConstraintSystem, LinearCombination, SynthesisError, Variable};
 
 use fil_sapling_crypto::circuit::boolean::{self, AllocatedBit, Boolean};
 
+/// pixel.rs currently same as the following implementation. 
+/// https://github.com/zcash-hackworks/sapling-crypto/blob/master/src/circuit/num.rs
+/// It provides a gadget for  a number allocation (AllocatedNum) which encapsulates a constraint system variable and 
+/// and addociated value (E::Fr) 
+/// It is replicated here to allow customization and represent a pixel for VideoCoin proof-of-transcode
+/// Traits that implement following methods:
+/// 	alloc
+/// 	inputize
+/// 	into_bits_le_strict : Deconstructs this allocated number into its boolean representation 
+/// 		in little-endian bitorder requiring that the representation strictly exists 
+/// 		"in the field" (i.e., a congruency is not allowed.)
+/// 	into_bits_le : 
+/// 	mul
+/// 	square
+/// 	assert_nonzero
+/// 	conditionally_reverse
+/// 	get_value
+/// 	get_variable
+/// https://github.com/zcash-hackworks/sapling-crypto/blob/master/src/circuit/num.rs
 
 pub struct AllocatedPixel<E: Engine> {
     pub value: Option<E::Fr>,
@@ -46,7 +65,7 @@ impl<E: Engine> AllocatedPixel<E> {
     {
         let mut new_value = None;
         let var = cs.alloc(
-            || "num",
+            || "pix",
             || {
                 let tmp = value()?;
                 new_value = Some(tmp);
@@ -265,7 +284,7 @@ impl<E: Engine> AllocatedPixel<E> {
         let mut value = None;
 
         let var = cs.alloc(
-            || "squared num",
+            || "squared pix",
             || {
                 let mut tmp = *self.value.get()?;
                 tmp.square();
@@ -375,3 +394,133 @@ impl<E: Engine> AllocatedPixel<E> {
     }
 }
 
+#[cfg(test)]
+mod test {
+    use super::{AllocatedPixel, Boolean};
+    use bellperson::ConstraintSystem;
+    use storage_proofs::circuit::test::*;
+    use ff::{BitIterator, Field, PrimeField};
+    use paired::bls12_381::{Bls12, Fr};
+    use rand::{Rand, Rng, SeedableRng, XorShiftRng};
+
+	#[test]
+	fn test_allocated_pixel() {
+	    let mut cs = TestConstraintSystem::<Bls12>::new();
+	
+	    let value_pix = AllocatedPixel::alloc(&mut cs, || Ok(Fr::one())).unwrap();
+		print!("Pixel variable={:?}", value_pix.get_variable());
+	    assert!(cs.get("pix") == Fr::one());
+		assert!(value_pix.get_value().unwrap() == Fr::one());
+	}
+    #[test]
+    fn test_num_squaring() {
+        let mut cs = TestConstraintSystem::<Bls12>::new();
+
+        let n = AllocatedPixel::alloc(&mut cs, || Ok(Fr::from_str("3").unwrap())).unwrap();
+        let n2 = n.square(&mut cs).unwrap();
+
+        assert!(cs.is_satisfied());
+        assert!(cs.get("squared pix") == Fr::from_str("9").unwrap());
+        assert!(n2.value.unwrap() == Fr::from_str("9").unwrap());
+        cs.set("squared pix", Fr::from_str("10").unwrap());
+        assert!(!cs.is_satisfied());
+    }	
+    #[test]
+    fn test_num_multiplication() {
+        let mut cs = TestConstraintSystem::<Bls12>::new();
+
+        let n =
+            AllocatedPixel::alloc(cs.namespace(|| "a"), || Ok(Fr::from_str("12").unwrap())).unwrap();
+        let n2 =
+            AllocatedPixel::alloc(cs.namespace(|| "b"), || Ok(Fr::from_str("10").unwrap())).unwrap();
+        let n3 = n.mul(&mut cs, &n2).unwrap();
+
+		print!("Pixel n1={:?}:{:?} n2={:?}:{:?} n3={:?}:{:?}", n.get_variable(), n.get_value(), 
+				n2.get_variable(),n2.get_value(), n3.get_variable(), n3.get_value());
+        assert!(cs.is_satisfied());
+        assert!(cs.get("product num") == Fr::from_str("120").unwrap());
+        assert!(n3.value.unwrap() == Fr::from_str("120").unwrap());
+        cs.set("product num", Fr::from_str("121").unwrap());
+        assert!(!cs.is_satisfied());
+    }
+    #[test]
+    fn test_num_conditional_reversal() {
+        //let mut rng = XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+        {
+            let mut cs = TestConstraintSystem::<Bls12>::new();
+
+            let a = AllocatedPixel::alloc(cs.namespace(|| "a"), || Ok(Fr::from_str("1").unwrap())).unwrap();
+            let b = AllocatedPixel::alloc(cs.namespace(|| "b"), || Ok(Fr::from_str("2").unwrap())).unwrap();
+            let condition = Boolean::constant(false);
+            let (c, d) = AllocatedPixel::conditionally_reverse(&mut cs, &a, &b, &condition).unwrap();
+
+            assert!(cs.is_satisfied());
+
+            assert_eq!(a.value.unwrap(), c.value.unwrap());
+            assert_eq!(b.value.unwrap(), d.value.unwrap());
+        }
+
+        {
+            let mut cs = TestConstraintSystem::<Bls12>::new();
+
+            let a = AllocatedPixel::alloc(cs.namespace(|| "a"), ||  Ok(Fr::from_str("1").unwrap())).unwrap();
+            let b = AllocatedPixel::alloc(cs.namespace(|| "b"), ||  Ok(Fr::from_str("2").unwrap())).unwrap();
+            let condition = Boolean::constant(true);
+            let (c, d) = AllocatedPixel::conditionally_reverse(&mut cs, &a, &b, &condition).unwrap();
+
+            assert!(cs.is_satisfied());
+
+            assert_eq!(a.value.unwrap(), d.value.unwrap());
+            assert_eq!(b.value.unwrap(), c.value.unwrap());
+        }
+    }
+    #[test]
+    fn test_into_bits() {
+        let mut rng = XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
+
+        //for i in 0..200 
+		{
+            let r = Fr::rand(&mut rng);
+            let mut cs = TestConstraintSystem::<Bls12>::new();
+
+            let n = AllocatedPixel::alloc(&mut cs, || Ok(r)).unwrap();
+/*
+            let bits = if i % 2 == 0 {
+                n.into_bits_le(&mut cs).unwrap()
+            } else {
+                n.into_bits_le_strict(&mut cs).unwrap()
+            };
+*/
+			let bits = n.into_bits_le(&mut cs).unwrap();
+			
+            assert!(cs.is_satisfied());
+
+            for (b, a) in BitIterator::new(r.into_repr())
+                .skip(1)
+                .zip(bits.iter().rev())
+            {
+                if let &Boolean::Is(ref a) = a {
+                    assert_eq!(b, a.get_value().unwrap());
+                } else {
+                    unreachable!()
+                }
+            }
+
+            cs.set("pix", Fr::rand(&mut rng));
+            assert!(!cs.is_satisfied());
+            cs.set("pix", r);
+            assert!(cs.is_satisfied());
+
+            for i in 0..Fr::NUM_BITS {
+                let name = format!("bit {}/boolean", i);
+                let cur = cs.get(&name);
+                let mut tmp = Fr::one();
+                tmp.sub_assign(&cur);
+                cs.set(&name, tmp);
+                assert!(!cs.is_satisfied());
+                cs.set(&name, cur);
+                assert!(cs.is_satisfied());
+            }
+        }
+    }
+}
