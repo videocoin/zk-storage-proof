@@ -66,7 +66,7 @@ fn main()
 	let _src_pixel: Vec<u32> = (0..256).map(|x| x).collect();
 	let _dst_pixel: Vec<u32> = (0..256).map(|x| x).collect();
 			
-	mb_ssim::main(_src_pixel, _dst_pixel);
+	mb_ssim::ssim_circuit_proof_verify(_src_pixel, _dst_pixel);
 */
 /*
 	let mut data:Vec<u64> = Vec::new();

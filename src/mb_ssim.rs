@@ -99,7 +99,7 @@ where
 		let mut value = E::Fr::zero(); 
 		for i in 0..mbSize {
 			let pix = a[i].get_value();
-			print!("Sample {:?}\n", pix);
+			print!("Sample var={:?} val={:?}\n",  a[i].get_variable(), pix);
 			value.add_assign(&pix.unwrap());
 		}
         Ok(value)
@@ -107,6 +107,23 @@ where
     let res = sumVecEnforce(cs, || format!("sum"), &a, &num_value);
 
 	Ok(num_value)
+}
+
+pub fn sumVecEnforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
+    cs: &mut CS,
+    annotation: A,
+    a: &Vec<pixel::AllocatedPixel<E>>,
+    sum: &pixel::AllocatedPixel<E>,
+) where
+    A: FnOnce() -> AR,
+    AR: Into<String>,
+{
+    cs.enforce(
+        annotation,
+        |mut lc| {for i in 1..a.len() {lc = lc + a[i].get_variable()} lc},
+        |lc| lc + CS::one(),
+        |lc| lc + sum.get_variable(),
+    );
 }
 
 /// Adds a constraint to CS, enforcing a difference square relationship between the allocated numbers a, b, and difference.
@@ -363,24 +380,9 @@ where
 	Ok(num_value)
 }
 
-pub fn sumVecEnforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
-    cs: &mut CS,
-    annotation: A,
-    a: &Vec<pixel::AllocatedPixel<E>>,
-    sum: &pixel::AllocatedPixel<E>,
-) where
-    A: FnOnce() -> AR,
-    AR: Into<String>,
-{
-    cs.enforce(
-        annotation,
-        |mut lc| {for i in 1..a.len() {lc = lc + a[i].get_variable()} lc},
-        |lc| lc + CS::one(),
-        |lc| lc + sum.get_variable(),
-    );
-}
 
-pub fn main(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>){
+
+pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>){
     use paired::bls12_381::{Bls12, Fr};
     use rand::thread_rng;
     use bellperson::groth16::{
@@ -423,4 +425,44 @@ pub fn main(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>){
         &proof,
         &expected_inputs[..]
     ).unwrap());
+}
+
+#[cfg(test)]
+mod test {
+	use super::sumVec;
+    use super::pixel::*;
+	use super::ssim_circuit_proof_verify;
+	use fil_sapling_crypto::circuit::boolean::{self, AllocatedBit, Boolean};
+    use bellperson::{ConstraintSystem, SynthesisError};
+    use storage_proofs::circuit::test::*;
+    use ff::{BitIterator, Field, PrimeField};
+    use paired::bls12_381::{Bls12, Fr};
+    use rand::{Rand, Rng, SeedableRng, XorShiftRng};
+
+	#[test]
+	fn test_sumvec() {
+		let mut cs = TestConstraintSystem::<Bls12>::new();
+		// Prepare 3x3 test vector
+
+		let mut var_pix3x3:  Vec<AllocatedPixel<Bls12>> = Vec::new();
+		for i in 0..9 {
+			let mut cs = cs.namespace(|| format!("src {}", i));
+			let value = Some(Fr::from_str("3").unwrap());
+			let value_num = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", i)), || {
+				value.ok_or_else(|| SynthesisError::AssignmentMissing)
+	        });
+			var_pix3x3.push(value_num.unwrap());
+		}
+
+		let sum = sumVec(&mut cs, || "sum vec", &var_pix3x3);
+		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
+		assert!(sum.unwrap().get_value().unwrap() ==Fr::from_str("81").unwrap());
+	}
+	
+/*	#[test]
+	fn test_ssim_circuit_proof_verify() {		
+		let _src_pixel: Vec<u32> = (0..256).map(|x| x).collect();
+		let _dst_pixel: Vec<u32> = (0..256).map(|x| x).collect();
+		ssim_circuit_proof_verify(_src_pixel, _dst_pixel);
+	}*/
 }
