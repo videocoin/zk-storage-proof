@@ -38,7 +38,7 @@ impl <E: Engine> Circuit<E> for Ssim<E> {
     ) -> Result<(), SynthesisError>
     {
 		let mbSize = self.srcPixels.len();
-	    let mut varvecSrc: Vec<_> = Vec::new();
+	    let mut varvec_src: Vec<_> = Vec::new();
 
 
 		//let mut varvecDiffSqDst: Vec<_> = Vec::new();
@@ -51,7 +51,7 @@ impl <E: Engine> Circuit<E> for Ssim<E> {
 				value.ok_or_else(|| SynthesisError::AssignmentMissing)
             })?;
 			value_num.inputize(cs.namespace(|| "value num"))?;
-			varvecSrc.push(value_num);
+			varvec_src.push(value_num);
  		}
 
 		let mut varvecDst: Vec<_> = Vec::new();
@@ -67,15 +67,15 @@ impl <E: Engine> Circuit<E> for Ssim<E> {
 		}
 			
 		// mean source
-		let varSumSrc = sumVec(cs, || format!("sum src"), &varvecSrc).unwrap();
+		let varSumSrc = sumVec(cs, || format!("sum src"), &varvec_src).unwrap();
 		let varMeanSrc = mean(cs, || format!("sum"), &varSumSrc, mbSize).unwrap();
 
 		let varSumDst = sumVec(cs, || format!("sum src"), &varvecDst).unwrap();
 		let varMeanDst = mean(cs, || format!("sum"), &varSumDst, mbSize).unwrap();
 		
-		let varVarianceSumSrc = variance(cs, || format!("var sum src"), &varvecSrc, &varvecSrc, &varMeanSrc, &varMeanSrc).unwrap();
+		let varVarianceSumSrc = variance(cs, || format!("var sum src"), &varvec_src, &varvec_src, &varMeanSrc, &varMeanSrc).unwrap();
 		let varVarianceSumDst = variance(cs, || format!("var sum dst"), &varvecDst, &varvecDst, &varMeanDst, &varMeanDst).unwrap();
-		let varCovarianceSum = variance(cs, || format!("covar sum"), &varvecSrc, &varvecDst, &varMeanSrc, &varMeanDst).unwrap();
+		let varCovarianceSum = variance(cs, || format!("covar sum"), &varvec_src, &varvecDst, &varMeanSrc, &varMeanDst).unwrap();
  		
 		let varVarianceSrc = mean(cs, || format!("sum"), &varVarianceSumSrc, mbSize).unwrap();
 		let varVarianceDst = mean(cs, || format!("sum"), &varVarianceSumDst, mbSize).unwrap();
@@ -104,12 +104,12 @@ where
 		}
         Ok(value)
     })?;
-    let res = sumVecEnforce(cs, || format!("sum"), &a, &num_value);
+    sum_vec_enforce(cs, || "sum enforce", &a, &num_value);
 
 	Ok(num_value)
 }
 
-pub fn sumVecEnforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
+pub fn sum_vec_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
     cs: &mut CS,
     annotation: A,
     a: &Vec<pixel::AllocatedPixel<E>>,
@@ -120,7 +120,12 @@ pub fn sumVecEnforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 {
     cs.enforce(
         annotation,
-        |mut lc| {for i in 1..a.len() {lc = lc + a[i].get_variable()} lc},
+        |mut lc| { 
+	        for x in a.iter() {
+		        lc = lc + x.get_variable()
+			} 
+			lc
+		},
         |lc| lc + CS::one(),
         |lc| lc + sum.get_variable(),
     );
@@ -456,7 +461,7 @@ mod test {
 
 		let sum = sumVec(&mut cs, || "sum vec", &var_pix3x3);
 		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
-		assert!(sum.unwrap().get_value().unwrap() ==Fr::from_str("81").unwrap());
+		assert!(sum.unwrap().get_value().unwrap() ==Fr::from_str("27").unwrap());
 	}
 	
 /*	#[test]
