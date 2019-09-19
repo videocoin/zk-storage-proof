@@ -402,7 +402,7 @@ mod test {
     use ff::{BitIterator, Field, PrimeField};
     use paired::bls12_381::{Bls12, Fr};
     use rand::{Rand, Rng, SeedableRng, XorShiftRng};
-
+/*
 	#[test]
 	fn test_allocated_pixel() {
 	    let mut cs = TestConstraintSystem::<Bls12>::new();
@@ -522,5 +522,5 @@ mod test {
                 assert!(cs.is_satisfied());
             }
         }
-    }
+    }*/
 }
