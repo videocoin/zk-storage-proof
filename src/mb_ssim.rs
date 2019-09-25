@@ -34,6 +34,11 @@ impl<E: Engine> Circuit<E> for Ssim<E> {
 
 		//let mut varvecDiffSqDst: Vec<_> = Vec::new();
 		// Source pixel data
+		let sum_src_64: u64 = 0;
+		let sum_dst_64: u64 = 0;
+		let var_variance_sum_src_u64 = 0;
+		let var_variance_sum_dst_u64 = 0;
+		let var_covariance_sum_u64 = 0;
 		for i in 0..mb_size {
 			let mut cs = cs.namespace(|| format!("src {}", i));
 			let value = self.srcPixels[i];
@@ -46,9 +51,10 @@ impl<E: Engine> Circuit<E> for Ssim<E> {
 
 		let mut var_vec_dst: Vec<_> = Vec::new();
 		// Destination pixel data. Auxiliary input
+
 		for i in 0..mb_size {
 			let mut cs = cs.namespace(|| format!("dst {}", i));
-			let value = self.srcPixels[i];
+			let value = self.dstPixels[i];
 			let value_num = pixel::AllocatedPixel::alloc(cs.namespace(|| "value"), || {
 				value.ok_or_else(|| SynthesisError::AssignmentMissing)
 			})?;
@@ -57,10 +63,10 @@ impl<E: Engine> Circuit<E> for Ssim<E> {
 		}
 		// mean source
 		let var_sum_src = sum_vec(cs, || ("sum src"), &varvec_src).unwrap();
-		let var_mean_src = mean(cs, || ("mean src"), &var_sum_src, mb_size).unwrap();
+		let var_mean_src = mean(cs, || ("mean src"), &var_sum_src, sum_src_64, mb_size).unwrap();
 
 		let var_sum_dst = sum_vec(cs, || ("sum dst"), &var_vec_dst).unwrap();
-		let var_mean_dst = mean(cs, || ("mean dst"), &var_sum_dst, mb_size).unwrap();
+		let var_mean_dst = mean(cs, || ("mean dst"), &var_sum_dst, sum_dst_64, mb_size).unwrap();
 
 		let var_variance_sum_src = variance(
 			cs,
@@ -89,9 +95,9 @@ impl<E: Engine> Circuit<E> for Ssim<E> {
 			&var_mean_dst,
 		)
 		.unwrap();
-		let var_variance_src = mean(cs, || ("var src"), &var_variance_sum_src, mb_size).unwrap();
-		let var_variance_dst = mean(cs, || ("var dst"), &var_variance_sum_dst, mb_size).unwrap();
-		let var_covariance = mean(cs, || ("covar"), &var_covariance_sum, mb_size).unwrap();
+		let var_variance_src = mean(cs, || ("var src"), &var_variance_sum_src, var_variance_sum_src_u64, mb_size).unwrap();
+		let var_variance_dst = mean(cs, || ("var dst"), &var_variance_sum_dst, var_variance_sum_dst_u64, mb_size).unwrap();
+		let var_covariance = mean(cs, || ("covar"), &var_covariance_sum, var_covariance_sum_u64, mb_size).unwrap();
 
 		Ok(())
 	}
@@ -149,8 +155,9 @@ pub fn mean_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	cs: &mut CS,
 	annotation: A,
 	sum: &pixel::AllocatedPixel<E>,
-	mean: &pixel::AllocatedPixel<E>,
-	num_elems: &pixel::AllocatedPixel<E>,
+	num_samples: &pixel::AllocatedPixel<E>,
+	mean_int: &pixel::AllocatedPixel<E>,
+	mean_rem: &pixel::AllocatedPixel<E>,
 ) where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
@@ -159,53 +166,46 @@ pub fn mean_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 
 	cs.enforce(
 		annotation,
-		|lc| lc + mean.get_variable(),
-		|lc| lc + num_elems.get_variable(),
-		|lc| lc + sum.get_variable(),
+		|lc| { lc + mean_int.variable },	
+		|lc| { lc + num_samples.variable },
+		|lc| { lc + sum.get_variable() -  mean_rem.variable},
 	);
 }
 
-fn is_greater_than() -> bool {
-	return false;
-}
 
 /// Implements div (i.e. mean = sum / n) as mul (mean * n = sum)
 pub fn mean<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	cs: &mut CS,
 	annotation: A,
 	sum: &pixel::AllocatedPixel<E>,
+	sum_64: u64,
 	num_elems: usize,
 ) -> Result<pixel::AllocatedPixel<E>, SynthesisError>
 where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
 {
-	// Formulate division as multiplication
-	// mean = sum / num_elems
-	// mean * num_elems = sum
-
-	let mean_value_var = pixel::AllocatedPixel::alloc(cs.namespace(|| "mean"), || {
-		let mut value = E::Fr::zero();
-		// TODO calc mean
+	let num_samples = pixel::AllocatedPixel::alloc(cs.namespace(|| "mean"), || {
+		let value: E::Fr = (E::Fr::from_repr((num_elems as u64).into())).unwrap();
 		Ok(value)
 	})?;
 	
-	let num_elems_var = pixel::AllocatedPixel::alloc(cs.namespace(|| "num_elems"), || {
-		let mut value = E::Fr::zero();
-		let add_1 = E::Fr::one();
-		for i in 0..num_elems {
-			// TODO: check suitable convestion or scalr multipication
-			//let num_elems_val: <E as ff::ScalarEngine>::Fr = (Fr::from_repr(FrRepr::from(num_elems as u64))).unwrap();
-			value.add_assign(&add_1);
-		}
+	let mean_int_var = pixel::AllocatedPixel::alloc(cs.namespace(|| "quotient"), || {
+		let mean_val: u64 = sum_64 / num_elems as u64;//sum.get_value();
+		let value: E::Fr = (E::Fr::from_repr(mean_val.into())).unwrap();
 		Ok(value)
 	})?;
 	
 
+	let mean_rem = pixel::AllocatedPixel::alloc(cs.namespace(|| "rem"), || {
+		let mean_val: u64 = sum_64 % num_elems as u64;//sum.get_value();
+		let value: E::Fr = (E::Fr::from_repr(mean_val.into())).unwrap();
+		Ok(value)
+	})?;
 	
-	mean_enforce(cs, || "mean enforce", &sum, &mean_value_var, &num_elems_var);
+	mean_enforce(cs, || "mean enforce", &sum, &num_samples, &mean_int_var, &mean_rem);
 
-	Ok(mean_value_var)
+	Ok(mean_int_var)
 }
 
 /// Adds a constraint to CS, enforcing an equality relationship between the allocated numbers a and b.
