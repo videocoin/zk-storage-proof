@@ -69,10 +69,12 @@ impl<E: Engine> AllocatedPixel<E> {
             || {
                 let tmp = value()?;
                 new_value = Some(tmp);
+				print!("pixel value={:?}\n", new_value);
                 Ok(tmp)
             },
         )?;
 
+		print!("pixel var={:?}\n", var);
         Ok(AllocatedPixel {
             value: new_value,
             variable: var,
@@ -385,7 +387,6 @@ impl<E: Engine> AllocatedPixel<E> {
     }
 
     pub fn get_value(&self) -> Option<E::Fr> {
-		print!("pixel value {:?}\n", self.value);
         self.value
     }
 

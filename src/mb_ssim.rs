@@ -117,7 +117,6 @@ where
 		let mut value = E::Fr::zero();
 		for i in 0..mb_size {
 			let pix = a[i].get_value();
-			print!("Sample var={:?} val={:?}\n", a[i].get_variable(), pix);
 			value.add_assign(&pix.unwrap());
 		}
 		Ok(value)
@@ -168,7 +167,7 @@ pub fn mean_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 		annotation,
 		|lc| { lc + mean_int.variable },	
 		|lc| { lc + num_samples.variable },
-		|lc| { lc + sum.get_variable() -  mean_rem.variable},
+		|lc| { lc + sum.variable -  mean_rem.variable},
 	);
 }
 
@@ -198,8 +197,8 @@ where
 	
 
 	let mean_rem = pixel::AllocatedPixel::alloc(cs.namespace(|| "rem"), || {
-		let mean_val: u64 = sum_64 % num_elems as u64;//sum.get_value();
-		let value: E::Fr = (E::Fr::from_repr(mean_val.into())).unwrap();
+		let mean_rem: u64 = sum_64 % num_elems as u64;//sum.get_value();
+		let value: E::Fr = (E::Fr::from_repr(mean_rem.into())).unwrap();
 		Ok(value)
 	})?;
 	
@@ -493,13 +492,15 @@ mod test {
 	use storage_proofs::circuit::test::*;
 
 	fn gen_sample(cs: &mut TestConstraintSystem<Bls12>) -> Vec<AllocatedPixel<Bls12>> {
-		let mut cs = TestConstraintSystem::<Bls12>::new();
 		// Prepare 3x3 test vector
 
 		let mut var_pix3x3: Vec<AllocatedPixel<Bls12>> = Vec::new();
 		for i in 0..9 {
 			let mut cs = cs.namespace(|| format!("src {}", i));
-			let value = Some(Fr::from_str("3").unwrap());
+			let mut value = Some(Fr::from_str("3").unwrap());
+			if i == 0  {
+				value = Some(Fr::from_str("4").unwrap());
+			}
 			let value_num = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", i)), || {
 				value.ok_or_else(|| SynthesisError::AssignmentMissing)
 			});
@@ -533,15 +534,42 @@ mod test {
 	}
 	
 */	
+/*
+	#[test]
+	fn test_mean_decoupled_from_sum() {
+		let mut cs = TestConstraintSystem::<Bls12>::new();
+		let var_sum = AllocatedPixel::alloc(cs.namespace(|| format!("sum")), || {
+			let value = Some(Fr::from_str("28").unwrap());
+			print!("sum = {:?}", value );
+			value.ok_or_else(|| SynthesisError::AssignmentMissing)
+		});
+		let var_mean = mean(&mut cs, || "test mean", &var_sum.unwrap(), 28, 9);
+		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
+		print!("Num inputs: {:?}\n", cs.num_inputs());
+		print!("Num constraints: {:?}\n", cs.num_constraints());
+
+		assert!(var_mean.unwrap().get_value().unwrap() == Fr::from_str("3").unwrap());
+		assert!(cs.is_satisfied());
+	}
+*/	
+
     #[test]
 	fn test_mean() {
 		let mut cs = TestConstraintSystem::<Bls12>::new();
 		let var_pix3x3 = gen_sample(&mut cs);
 		let var_sum = sum_vec(&mut cs, || "sum vec", &var_pix3x3).unwrap();
-		let var_mean = mean(&mut cs, || "test mean", &var_sum, 9);
+		print!("Num inputs: {:?}\n", cs.num_inputs());
+		print!("Num constraints: {:?}\n", cs.num_constraints());		
+		let var_mean = mean(&mut cs, || "test mean", &var_sum, 28, 9);
 		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
+		print!("Num inputs: {:?}\n", cs.num_inputs());
+		print!("Num constraints: {:?}\n", cs.num_constraints());
+
 		assert!(var_mean.unwrap().get_value().unwrap() == Fr::from_str("3").unwrap());
+		assert!(cs.is_satisfied());
 	}
+	
+	
 	/*	#[test]
 		fn test_ssim_circuit_proof_verify() {
 			let _src_pixel: Vec<u32> = (0..256).map(|x| x).collect();
