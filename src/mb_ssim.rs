@@ -490,19 +490,25 @@ mod test {
 	use paired::bls12_381::{Bls12, Fr};
 	use rand::{Rand, Rng, SeedableRng, XorShiftRng};
 	use storage_proofs::circuit::test::*;
-
-	fn gen_sample(cs: &mut TestConstraintSystem<Bls12>) -> Vec<AllocatedPixel<Bls12>> {
+	use paired::Engine;
+	
+	fn gen_sample<E: Engine, A, AR>(cs: &mut TestConstraintSystem<E>, annotation: A, ) -> Vec<AllocatedPixel<E>> 
+	where
+	A: FnOnce() -> AR,
+	AR: Into<String>, 
+	AR: Into<String>, {
 		// Prepare 3x3 test vector
 
-		let mut var_pix3x3: Vec<AllocatedPixel<Bls12>> = Vec::new();
+		let mut var_pix3x3: Vec<AllocatedPixel<E>> = Vec::new();
 		for i in 0..9 {
 			let mut cs = cs.namespace(|| format!("src {}", i));
-			let mut value = Some(Fr::from_str("3").unwrap());
-			if i == 0  {
-				value = Some(Fr::from_str("4").unwrap());
-			}
+
 			let value_num = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", i)), || {
-				value.ok_or_else(|| SynthesisError::AssignmentMissing)
+				let mut value = E::Fr::from_str("3").unwrap();
+				if i == 0  {
+					value = E::Fr::from_str("4").unwrap();
+				}
+				Ok(value)
 			});
 			var_pix3x3.push(value_num.unwrap());
 		}
@@ -553,6 +559,7 @@ mod test {
 	}
 */	
 
+/*
     #[test]
 	fn test_mean() {
 		let mut cs = TestConstraintSystem::<Bls12>::new();
@@ -568,7 +575,26 @@ mod test {
 		assert!(var_mean.unwrap().get_value().unwrap() == Fr::from_str("3").unwrap());
 		assert!(cs.is_satisfied());
 	}
-	
+*/	
+	#[test]
+	fn test_lum_ssim() {
+		let mut cs = TestConstraintSystem::<Bls12>::new();
+
+		let var_src3x3 = gen_sample(&mut cs, || "src pix");
+		let var_dst3x3 = gen_sample(&mut cs, || "dst pix");
+		let var_sum_src = sum_vec(&mut cs, || "sum vec", &var_src3x3).unwrap();
+		let var_sum_dst = sum_vec(&mut cs, || "dst vec", &var_dst3x3).unwrap();
+		print!("Num inputs: {:?}\n", cs.num_inputs());
+		print!("Num constraints: {:?}\n", cs.num_constraints());		
+		let var_mean_src = mean(&mut cs, || "test src mean", &var_sum_src, 28, 9);
+		let var_mean_dst = mean(&mut cs, || "test dst mean", &var_sum_dst, 28, 9);
+		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
+		print!("Num inputs: {:?}\n", cs.num_inputs());
+		print!("Num constraints: {:?}\n", cs.num_constraints());
+
+		assert!(var_mean_src.unwrap().get_value().unwrap() == Fr::from_str("3").unwrap());
+		assert!(cs.is_satisfied());
+	}
 	
 	/*	#[test]
 		fn test_ssim_circuit_proof_verify() {
