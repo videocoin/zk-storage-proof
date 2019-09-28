@@ -8,9 +8,8 @@ use bellperson::{Circuit, ConstraintSystem, SynthesisError};
 use paired::bls12_381::{Bls12, Fr, FrRepr};
 use paired::Engine;
 
-use super::pixel;
-use ff::Field;
-use ff::PrimeField;
+use super::pixel::*;
+use ff::{BitIterator, Field, PrimeField};
 use fil_sapling_crypto::circuit::{boolean, multipack, num, pedersen_hash};
 use rand::{Rng, SeedableRng, XorShiftRng};
 use std::sync::{Arc, RwLock};
@@ -62,12 +61,12 @@ impl<E: Engine> Circuit<E> for Ssim<E> {
 			//value_num.inputize(cs.namespace(|| "value num"))?;
 			var_vec_dst.push(value_num);
 		}
-		// mean source
+		// div_constraint source
 		let var_sum_src = sum_vec(cs, || ("sum src"), &varvec_src).unwrap();
-		let var_mean_src = mean(cs, || ("mean src"), &var_sum_src, sum_src_64, mb_size).unwrap();
+		let var_mean_src = div_constraint(cs, || ("div_constraint src"), &var_sum_src, sum_src_64, mb_size).unwrap();
 
 		let var_sum_dst = sum_vec(cs, || ("sum dst"), &var_vec_dst).unwrap();
-		let var_mean_dst = mean(cs, || ("mean dst"), &var_sum_dst, sum_dst_64, mb_size).unwrap();
+		let var_mean_dst = div_constraint(cs, || ("div_constraint dst"), &var_sum_dst, sum_dst_64, mb_size).unwrap();
 
 		let var_variance_sum_src = variance(
 			cs,
@@ -96,9 +95,9 @@ impl<E: Engine> Circuit<E> for Ssim<E> {
 			&var_mean_dst,
 		)
 		.unwrap();
-		let var_variance_src = mean(cs, || ("var src"), &var_variance_sum_src, var_variance_sum_src_u64, mb_size).unwrap();
-		let var_variance_dst = mean(cs, || ("var dst"), &var_variance_sum_dst, var_variance_sum_dst_u64, mb_size).unwrap();
-		let var_covariance = mean(cs, || ("covar"), &var_covariance_sum, var_covariance_sum_u64, mb_size).unwrap();
+		let var_variance_src = div_constraint(cs, || ("var src"), &var_variance_sum_src, var_variance_sum_src_u64, mb_size).unwrap();
+		let var_variance_dst = div_constraint(cs, || ("var dst"), &var_variance_sum_dst, var_variance_sum_dst_u64, mb_size).unwrap();
+		let var_covariance = div_constraint(cs, || ("covar"), &var_covariance_sum, var_covariance_sum_u64, mb_size).unwrap();
 */
 		Ok(())
 	}
@@ -107,10 +106,10 @@ impl<E: Engine> Circuit<E> for Ssim<E> {
 
 pub fn sum_vec<E: Engine,  CS: ConstraintSystem<E>>(
 	mut cs: CS,
-	a: &Vec<pixel::AllocatedPixel<E>>,
-) -> Result<pixel::AllocatedPixel<E>, SynthesisError>
+	a: &Vec<AllocatedPixel<E>>,
+) -> Result<AllocatedPixel<E>, SynthesisError>
 {
-	let num_value = pixel::AllocatedPixel::alloc(cs.namespace(|| "sum"), || {
+	let num_value = AllocatedPixel::alloc(cs.namespace(|| "sum"), || {
 		let mb_size = a.len();
 		let mut value = E::Fr::zero();
 		for i in 0..mb_size {
@@ -127,8 +126,8 @@ pub fn sum_vec<E: Engine,  CS: ConstraintSystem<E>>(
 pub fn sum_vec_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	mut cs:  CS,
 	annotation: A,
-	a: &Vec<pixel::AllocatedPixel<E>>,
-	sum: &pixel::AllocatedPixel<E>,
+	a: &Vec<AllocatedPixel<E>>,
+	sum: &AllocatedPixel<E>,
 ) where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
@@ -146,81 +145,82 @@ pub fn sum_vec_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	);
 }
 
-/// Adds a constraint to CS, enforcing a mean relationship between sum and num_elems.
-/// (a - b)^2 = difference^2
-pub fn mean_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
+/// Adds a constraint to CS, enforcing a divide relation as multiplicaion.
+/// quotient * denom = numerator - reminder
+pub fn div_constraint_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	mut cs: CS,
 	annotation: A,
-	sum: &pixel::AllocatedPixel<E>,
-	num_samples: &pixel::AllocatedPixel<E>,
-	mean_int: &pixel::AllocatedPixel<E>,
-	mean_rem: &pixel::AllocatedPixel<E>,
+	numerator: &AllocatedPixel<E>,
+	denom: &AllocatedPixel<E>,
+	quotient: &AllocatedPixel<E>,
+	reminder: &AllocatedPixel<E>,
 ) where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
 {
-	//  mean * num_elems = sum
+	//  div_constraint * num_elems = sum
 
 	cs.enforce(
 		annotation,
-		|lc| { lc + mean_int.variable },	
-		|lc| { lc + num_samples.variable },
-		|lc| { lc + sum.variable -  mean_rem.variable},
+		|lc| { lc + quotient.variable },	
+		|lc| { lc + denom.variable },
+		|lc| { lc + numerator.variable -  reminder.variable},
 	);
 }
 
 
-/// Implements div (i.e. mean = sum / n) as mul (mean * n = sum)
-pub fn mean<E: Engine, CS: ConstraintSystem<E>>(
+/// Implements div (i.e. div_constraint = sum / n) as mul (div_constraint * n = sum)
+pub fn div_constraint<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
-	sum: &pixel::AllocatedPixel<E>,
-	sum_64: u64,
-	num_elems: usize,
-) -> Result<pixel::AllocatedPixel<E>, SynthesisError>
+	numerator: &AllocatedPixel<E>,
+	numerator_u64: u64,
+	denom_u64: usize,
+) -> Result<AllocatedPixel<E>, SynthesisError>
 {
-	let num_samples = pixel::AllocatedPixel::alloc(cs.namespace(|| "mean"), || {
-		let value: E::Fr = (E::Fr::from_repr((num_elems as u64).into())).unwrap();
+	let num_samples = AllocatedPixel::alloc(cs.namespace(|| "div"), || {
+		//let num_repr: <<E as ff::ScalarEngine>::Fr as ff::PrimeField>::Repr = numerator.get_value().unwrap().into_repr();
+		let value: E::Fr = (E::Fr::from_repr((denom_u64 as u64).into())).unwrap();
 		Ok(value)
 	})?;
 	
-	let mean_int_var = pixel::AllocatedPixel::alloc(cs.namespace(|| "quotient"), || {
-		let mean_val: u64 = sum_64 / num_elems as u64;//sum.get_value();
+	let quotient = AllocatedPixel::alloc(cs.namespace(|| "quotient"), || {
+		let mean_val: u64 = numerator_u64 / denom_u64 as u64;//sum.get_value();
 		let value: E::Fr = (E::Fr::from_repr(mean_val.into())).unwrap();
 		Ok(value)
 	})?;
 	
 
-	let mean_rem = pixel::AllocatedPixel::alloc(cs.namespace(|| "rem"), || {
-		let mean_rem: u64 = sum_64 % num_elems as u64;//sum.get_value();
-		let value: E::Fr = (E::Fr::from_repr(mean_rem.into())).unwrap();
+	let reminder = AllocatedPixel::alloc(cs.namespace(|| "rem"), || {
+		let reminder: u64 = numerator_u64 % denom_u64 as u64;//sum.get_value();
+		let value: E::Fr = (E::Fr::from_repr(reminder.into())).unwrap();
 		Ok(value)
 	})?;
 	
-	mean_enforce(cs, || "mean enforce", &sum, &num_samples, &mean_int_var, &mean_rem);
+	div_constraint_enforce(cs, || "div_constraint enforce", &numerator, &num_samples, &quotient, &reminder);
 
-	Ok(mean_int_var)
+	Ok(quotient)
 }
 
 pub fn ssim_lum<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
-	src_mean: &pixel::AllocatedPixel<E>,
-	dst_mean: &pixel::AllocatedPixel<E>,
+	src_mean: &AllocatedPixel<E>,
+	dst_mean: &AllocatedPixel<E>,
 	c1: u64,
 	l: u64,
-) -> Result<pixel::AllocatedPixel<E>, SynthesisError>
+) -> Result<AllocatedPixel<E>, SynthesisError>
 {
-	let c1 = pixel::AllocatedPixel::alloc(cs.namespace(|| "c1"), || {
+	let c1 = AllocatedPixel::alloc(cs.namespace(|| "c1"), || {
 		let value: E::Fr = (E::Fr::from_repr((c1 as u64).into())).unwrap();
 		Ok(value)
 	})?;
 	
-	let l = pixel::AllocatedPixel::alloc(cs.namespace(|| "l"), || {
+	let l = AllocatedPixel::alloc(cs.namespace(|| "l"), || {
 		let value: E::Fr = (E::Fr::from_repr(l.into())).unwrap();
 		Ok(value)
 	})?;
 	
 
-	let uxuy = pixel::AllocatedPixel::alloc(cs.namespace(|| "uxuy"), || {
+	let uxuy = AllocatedPixel::alloc(cs.namespace(|| "uxuy"), || {
 		let mut value: E::Fr = src_mean.get_value().unwrap();
 		let mut value2: E::Fr = dst_mean.get_value().unwrap();
 		value.mul_assign(&value2);		
@@ -232,7 +232,7 @@ pub fn ssim_lum<E: Engine, CS: ConstraintSystem<E>>(
 		|lc| { lc + uxuy.variable},
 	);
 		
-	let ux_square = pixel::AllocatedPixel::alloc(cs.namespace(|| "ux_square"), || {
+	let ux_square = AllocatedPixel::alloc(cs.namespace(|| "ux_square"), || {
 		let mut value: E::Fr = src_mean.get_value().unwrap();
 		let mut value2: E::Fr = src_mean.get_value().unwrap();
 		value.mul_assign(&value2);		
@@ -245,7 +245,7 @@ pub fn ssim_lum<E: Engine, CS: ConstraintSystem<E>>(
 		|lc| { lc +  ux_square.variable},
 	);
 			
-	let uy_square = pixel::AllocatedPixel::alloc(cs.namespace(|| "uy_square"), || {
+	let uy_square = AllocatedPixel::alloc(cs.namespace(|| "uy_square"), || {
 		let mut value: E::Fr = dst_mean.get_value().unwrap();
 		let mut value2: E::Fr = dst_mean.get_value().unwrap();
 		value.mul_assign(&value2);
@@ -277,8 +277,8 @@ pub fn ssim_lum<E: Engine, CS: ConstraintSystem<E>>(
 pub fn equal<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	cs: &mut CS,
 	annotation: A,
-	a: &pixel::AllocatedPixel<E>,
-	b: &pixel::AllocatedPixel<E>,
+	a: &AllocatedPixel<E>,
+	b: &AllocatedPixel<E>,
 ) where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
@@ -300,9 +300,9 @@ pub fn equal<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 pub fn difference<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	cs: &mut CS,
 	annotation: A,
-	a: &pixel::AllocatedPixel<E>,
-	b: &pixel::AllocatedPixel<E>,
-	difference: &pixel::AllocatedPixel<E>,
+	a: &AllocatedPixel<E>,
+	b: &AllocatedPixel<E>,
+	difference: &AllocatedPixel<E>,
 ) where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
@@ -323,10 +323,10 @@ pub fn difference<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 #[allow(dead_code)]
 fn sub<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
-	a: &pixel::AllocatedPixel<E>,
-	b: &pixel::AllocatedPixel<E>,
-) -> Result<pixel::AllocatedPixel<E>, SynthesisError> {
-	let res = pixel::AllocatedPixel::alloc(cs.namespace(|| "sub num"), || {
+	a: &AllocatedPixel<E>,
+	b: &AllocatedPixel<E>,
+) -> Result<AllocatedPixel<E>, SynthesisError> {
+	let res = AllocatedPixel::alloc(cs.namespace(|| "sub num"), || {
 		let mut tmp = a
 			.get_value()
 			.ok_or_else(|| SynthesisError::AssignmentMissing)?;
@@ -350,9 +350,9 @@ fn sub<E: Engine, CS: ConstraintSystem<E>>(
 pub fn diff_sq_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	cs: &mut CS,
 	annotation: A,
-	a: &pixel::AllocatedPixel<E>,
-	b: &pixel::AllocatedPixel<E>,
-	diffsq: &pixel::AllocatedPixel<E>,
+	a: &AllocatedPixel<E>,
+	b: &AllocatedPixel<E>,
+	diffsq: &AllocatedPixel<E>,
 ) where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
@@ -372,10 +372,10 @@ pub fn diff_sq_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 #[allow(dead_code)]
 fn diffsq<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
-	a: &pixel::AllocatedPixel<E>,
-	b: &pixel::AllocatedPixel<E>,
-) -> Result<pixel::AllocatedPixel<E>, SynthesisError> {
-	let res = pixel::AllocatedPixel::alloc(cs.namespace(|| "diffsq"), || {
+	a: &AllocatedPixel<E>,
+	b: &AllocatedPixel<E>,
+) -> Result<AllocatedPixel<E>, SynthesisError> {
+	let res = AllocatedPixel::alloc(cs.namespace(|| "diffsq"), || {
 		let mut tmp = a
 			.get_value()
 			.ok_or_else(|| SynthesisError::AssignmentMissing)?;
@@ -399,11 +399,11 @@ fn diffsq<E: Engine, CS: ConstraintSystem<E>>(
 pub fn diff_mul_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	cs: &mut CS,
 	annotation: A,
-	a: &pixel::AllocatedPixel<E>,
-	mean_a: &pixel::AllocatedPixel<E>,
-	b: &pixel::AllocatedPixel<E>,
-	mean_b: &pixel::AllocatedPixel<E>,
-	res: &pixel::AllocatedPixel<E>,
+	a: &AllocatedPixel<E>,
+	mean_a: &AllocatedPixel<E>,
+	b: &AllocatedPixel<E>,
+	mean_b: &AllocatedPixel<E>,
+	res: &AllocatedPixel<E>,
 ) where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
@@ -422,12 +422,12 @@ pub fn diff_mul_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 #[allow(dead_code)]
 fn diffmul<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
-	a: &pixel::AllocatedPixel<E>,
-	mean_a: &pixel::AllocatedPixel<E>,
-	b: &pixel::AllocatedPixel<E>,
-	mean_b: &pixel::AllocatedPixel<E>,
-) -> Result<pixel::AllocatedPixel<E>, SynthesisError> {
-	let res = pixel::AllocatedPixel::alloc(cs.namespace(|| "diffmul"), || {
+	a: &AllocatedPixel<E>,
+	mean_a: &AllocatedPixel<E>,
+	b: &AllocatedPixel<E>,
+	mean_b: &AllocatedPixel<E>,
+) -> Result<AllocatedPixel<E>, SynthesisError> {
+	let res = AllocatedPixel::alloc(cs.namespace(|| "diffmul"), || {
 		let mut tmpa = a
 			.get_value()
 			.ok_or_else(|| SynthesisError::AssignmentMissing)?;
@@ -464,17 +464,17 @@ fn diffmul<E: Engine, CS: ConstraintSystem<E>>(
 pub fn variance<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	mut cs: CS,
 	annotation: A,
-	a: &Vec<pixel::AllocatedPixel<E>>,
-	b: &Vec<pixel::AllocatedPixel<E>>,
-	mean_a: &pixel::AllocatedPixel<E>,
-	mean_b: &pixel::AllocatedPixel<E>,
-) -> Result<pixel::AllocatedPixel<E>, SynthesisError>
+	a: &Vec<AllocatedPixel<E>>,
+	b: &Vec<AllocatedPixel<E>>,
+	mean_a: &AllocatedPixel<E>,
+	mean_b: &AllocatedPixel<E>,
+) -> Result<AllocatedPixel<E>, SynthesisError>
 where
 	A: FnOnce() -> AR,
 	AR: Into<String>,
 {
 	let mb_size = a.len();
-	let mut varDiffSqMeanSrc: pixel::AllocatedPixel<E>;
+	let mut varDiffSqMeanSrc: AllocatedPixel<E>;
 	let mut vecADiffMul: Vec<_> = Vec::new();
 	// sum diffsq src
 	for i in 0..mb_size {
@@ -483,7 +483,7 @@ where
 		vecADiffMul.push(value_num);
 	}
 
-	let num_value = pixel::AllocatedPixel::alloc(cs.namespace(|| "sum var"), || {
+	let num_value = AllocatedPixel::alloc(cs.namespace(|| "sum var"), || {
 		let mut value = E::Fr::zero();
 		for i in 0..mb_size {
 			let pix = vecADiffMul[i].get_value();
@@ -544,13 +544,13 @@ pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
 
 #[cfg(test)]
 mod test {
-	use super::pixel::*;
+	use super::*;
 	use super::ssim_circuit_proof_verify;
-	use super::{mean, sum_vec, diffsq, ssim_lum};
+	use super::{div_constraint, sum_vec, diffsq, ssim_lum};
 	use bellperson::{ConstraintSystem, SynthesisError};
 	use ff::{BitIterator, Field, PrimeField};
 	use fil_sapling_crypto::circuit::boolean::{self, AllocatedBit, Boolean};
-	use paired::bls12_381::{Bls12, Fr};
+	use paired::bls12_381::{Bls12, Fr, FrRepr};
 	use rand::{Rand, Rng, SeedableRng, XorShiftRng};
 	use storage_proofs::circuit::test::*;
 	use paired::Engine;
@@ -606,7 +606,7 @@ mod test {
 			print!("sum = {:?}", value );
 			value.ok_or_else(|| SynthesisError::AssignmentMissing)
 		});
-		let var_mean = mean(&mut cs, || "test mean", &var_sum.unwrap(), 28, 9);
+		let var_mean = div_constraint(&mut cs, || "test div_constraint", &var_sum.unwrap(), 28, 9);
 		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
 		print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());
@@ -624,7 +624,7 @@ mod test {
 		let var_sum = sum_vec(&mut cs, || "sum vec", &var_pix3x3).unwrap();
 		print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());		
-		let var_mean = mean(&mut cs, || "test mean", &var_sum, 28, 9);
+		let var_mean = div_constraint(&mut cs, || "test div_constraint", &var_sum, 28, 9);
 		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
 		print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());
@@ -641,14 +641,21 @@ mod test {
 		let var_dst3x3 = gen_sample(cs.namespace(|| "dst mb"));
 		let var_sum_src = sum_vec(cs.namespace(|| "src sum mb"), &var_src3x3).unwrap();
 		let var_sum_dst = sum_vec(cs.namespace(|| "dst sum mb"), &var_dst3x3).unwrap();
-		let var_mean_src = mean(cs.namespace(|| "src mean mb"), &var_sum_src, 28, 9).unwrap();
-		let var_mean_dst = mean(cs.namespace(|| "dst mean mb"), &var_sum_dst, 28, 9).unwrap();
+		
+		let sum_src = var_sum_src.get_value().unwrap().into_repr().0[0];
+		let num_samples = var_src3x3.len();
+		let var_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &var_sum_src, sum_src, num_samples).unwrap();
+
+		let sum_dst = var_sum_dst.get_value().unwrap().into_repr().0[0];
+		let var_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &var_sum_dst, sum_dst, num_samples).unwrap();
 
 		let l = ssim_lum(cs.namespace(|| "ssim lum"), &var_mean_src, &var_mean_dst, 0, 1);
 
 		print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());
-
+		let mean64 = 
+		print!("into_repr var_mean_src {:?}\n", var_mean_src.get_value().unwrap().into_repr());
+		print!("mean64 {:?}\n", mean64);
 		println!("{}", cs.pretty_print());
 		assert!(var_mean_src.get_value().unwrap() == Fr::from_str("3").unwrap());
 		assert!(cs.is_satisfied());
