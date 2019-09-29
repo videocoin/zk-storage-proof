@@ -33,13 +33,13 @@ use clap::{self, App, Arg, SubCommand};
 
 use pbr::ProgressBar;
 
-use logging_toolkit::make_logger;
+//use logging_toolkit::make_logger;
 use slog::Logger;
 use super::constraint;
 
-lazy_static! {
-    pub static ref SP_LOG: Logger = make_logger("storage-proofs");
-}
+//lazy_static! {
+//    pub static ref SP_LOG: Logger = make_logger("storage-proofs");
+//}
 
 /// This is an instance of the `ParallelProofOfRetrievability` circuit.
 ///
@@ -307,7 +307,7 @@ fn work_groth(
 ) {
     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
-    info!(SP_LOG, "tree_depth: {}", tree_depth; "target" => "config");
+    //info!(SP_LOG, "tree_depth: {}", tree_depth; "target" => "config");
 
 	let (auth_path, leaf, root) = (_auth_path, _leaf, _root);
 
@@ -320,17 +320,17 @@ fn work_groth(
     let p = get_cache_path(&name, 4);
     let cache_path = Path::new(&p);
     let groth_params: Parameters<Bls12> = if cache_path.exists() {
-        info!(SP_LOG, "reading groth params from cache: {:?}", cache_path; "target" => "params");
+        //info!(SP_LOG, "reading groth params from cache: {:?}", cache_path; "target" => "params");
         let f = File::open(&cache_path).expect("failed to read cache");
         Parameters::read(&f, false).expect("failed to read cached params")
     } else {
-        info!(SP_LOG, "generating new groth params"; "target" => "params");
+        //info!(SP_LOG, "generating new groth params"; "target" => "params");
         let p = instance.generate_groth_params(
             rng,
             &JUBJUB_BLS_PARAMS,
             tree_depth
         );
-        info!(SP_LOG, "writing params to cache: {:?}", cache_path; "target" => "params");
+        //info!(SP_LOG, "writing params to cache: {:?}", cache_path; "target" => "params");
 
         let mut f = File::create(&cache_path).expect("faild to open cache file");
         p.write(&mut f).expect("failed to write params to cache");
@@ -338,7 +338,7 @@ fn work_groth(
         p
     };
 
-    info!(SP_LOG, "generating verification key"; "target" => "params");
+    //info!(SP_LOG, "generating verification key"; "target" => "params");
     let pvk = prepare_verifying_key(&groth_params.vk);
 
     param_duration += start.elapsed();
@@ -384,9 +384,9 @@ fn work_groth(
     let verifying_avg = f64::from(verifying_avg.subsec_nanos()) / 1_000_000_000f64
         + (verifying_avg.as_secs() as f64);
 
-    info!(SP_LOG, "avg_proving_time: {:?} seconds", proving_avg; "target" => "stats");
-    info!(SP_LOG, "avg_verifying_time: {:?} seconds", verifying_avg; "target" => "stats");
-    info!(SP_LOG, "params_generation_time: {:?}", param_duration; "target" => "stats");
+    //info!(SP_LOG, "avg_proving_time: {:?} seconds", proving_avg; "target" => "stats");
+    //info!(SP_LOG, "avg_verifying_time: {:?} seconds", verifying_avg; "target" => "stats");
+    //info!(SP_LOG, "params_generation_time: {:?}", param_duration; "target" => "stats");
 }
 
 fn merkel_path(

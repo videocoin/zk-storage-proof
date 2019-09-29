@@ -9,7 +9,7 @@ use paired::bls12_381::{Bls12, Fr, FrRepr};
 use paired::Engine;
 
 use super::pixel::*;
-use ff::{BitIterator, Field, PrimeField};
+use ff::{BitIterator, Field, PrimeField, PrimeFieldRepr};
 use fil_sapling_crypto::circuit::{boolean, multipack, num, pedersen_hash};
 use rand::{Rng, SeedableRng, XorShiftRng};
 use std::sync::{Arc, RwLock};
@@ -178,13 +178,12 @@ pub fn div_constraint<E: Engine, CS: ConstraintSystem<E>>(
 ) -> Result<AllocatedPixel<E>, SynthesisError>
 {
 	let num_samples = AllocatedPixel::alloc(cs.namespace(|| "div"), || {
-		//let num_repr: <<E as ff::ScalarEngine>::Fr as ff::PrimeField>::Repr = numerator.get_value().unwrap().into_repr();
 		let value: E::Fr = (E::Fr::from_repr((denom_u64 as u64).into())).unwrap();
 		Ok(value)
 	})?;
 	
 	let quotient = AllocatedPixel::alloc(cs.namespace(|| "quotient"), || {
-		let mean_val: u64 = numerator_u64 / denom_u64 as u64;//sum.get_value();
+		let mean_val: u64 = numerator_u64 / denom_u64 as u64;
 		let value: E::Fr = (E::Fr::from_repr(mean_val.into())).unwrap();
 		Ok(value)
 	})?;
@@ -205,21 +204,16 @@ pub fn ssim_lum<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
 	src_mean: &AllocatedPixel<E>,
 	dst_mean: &AllocatedPixel<E>,
-	c1: u64,
-	l: u64,
+	c1_u64: u64,
+	l_numerator_u64: u64,
+	l_denominator_u64: u64,
 ) -> Result<AllocatedPixel<E>, SynthesisError>
 {
 	let c1 = AllocatedPixel::alloc(cs.namespace(|| "c1"), || {
-		let value: E::Fr = (E::Fr::from_repr((c1 as u64).into())).unwrap();
+		let value: E::Fr = (E::Fr::from_repr((c1_u64 as u64).into())).unwrap();
 		Ok(value)
 	})?;
 	
-	let l = AllocatedPixel::alloc(cs.namespace(|| "l"), || {
-		let value: E::Fr = (E::Fr::from_repr(l.into())).unwrap();
-		Ok(value)
-	})?;
-	
-
 	let uxuy = AllocatedPixel::alloc(cs.namespace(|| "uxuy"), || {
 		let mut value: E::Fr = src_mean.get_value().unwrap();
 		let mut value2: E::Fr = dst_mean.get_value().unwrap();
@@ -259,15 +253,31 @@ pub fn ssim_lum<E: Engine, CS: ConstraintSystem<E>>(
 		|lc| { lc + uy_square.variable},
 	);
 
-	let mut coeff = E::Fr::one();
-	coeff.double();
-	print!("coeff {:?}  \n",  coeff);
-	cs.enforce(	|| "enforce lum", 
-		|lc| { lc + ux_square.variable + uy_square.variable + c1.variable}, 	
-		|lc| { lc + l.variable },
-		|lc| { lc + (coeff, uxuy.variable) + c1.variable},
+	let lum_numerator = AllocatedPixel::alloc(cs.namespace(|| "lum numerator"), || {
+		let value: E::Fr = (E::Fr::from_repr((l_numerator_u64 as u64).into())).unwrap();
+		Ok(value)
+	})?;	
+	cs.enforce(	|| "enforce lum numerator", 
+		|lc| { 
+			let mut coeff = E::Fr::one();
+			coeff.double();
+			print!("coeff {:?}  \n",  coeff);	
+			lc + (coeff, uxuy.variable) + c1.variable
+		}, 	
+		|lc| { lc + CS::one() },
+		|lc| { lc + lum_numerator.variable},
 	);	
-	Ok(l)
+
+	let lum_denom = AllocatedPixel::alloc(cs.namespace(|| "lum denom"), || {
+		let value: E::Fr = (E::Fr::from_repr((l_denominator_u64 as u64).into())).unwrap();
+		Ok(value)
+	})?;	
+	cs.enforce(	|| "enforce lum denom", 
+		|lc| { lc + ux_square.variable + uy_square.variable + c1.variable}, 	
+		|lc| { lc + CS::one() },
+		|lc| { lc + lum_denom.variable},
+	);	
+	Ok(lum_numerator)
 }
 
 /// Adds a constraint to CS, enforcing an equality relationship between the allocated numbers a and b.
@@ -545,25 +555,22 @@ pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
 #[cfg(test)]
 mod test {
 	use super::*;
-	use super::ssim_circuit_proof_verify;
-	use super::{div_constraint, sum_vec, diffsq, ssim_lum};
-	use bellperson::{ConstraintSystem, SynthesisError};
-	use ff::{BitIterator, Field, PrimeField};
-	use fil_sapling_crypto::circuit::boolean::{self, AllocatedBit, Boolean};
-	use paired::bls12_381::{Bls12, Fr, FrRepr};
-	use rand::{Rand, Rng, SeedableRng, XorShiftRng};
 	use storage_proofs::circuit::test::*;
-	use paired::Engine;
-	
-	fn gen_sample<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS ) -> Vec<AllocatedPixel<E>>  {
+
+	fn gen_mb(mb_size: usize ) -> Vec<u32>  {	
+		let mb: Vec<u32> = (0..mb_size).map(|x| 3).collect();
+		mb
+	}
+
+	fn gen_sample<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: Vec<u32> ) -> Vec<AllocatedPixel<E>>  {
 		// Prepare 3x3 test vector
 
 		let mut var_pix3x3: Vec<AllocatedPixel<E>> = Vec::new();
-		for i in 0..9 {
+		for i in 0..mb.len() {
 			let value_num = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", i)), || {
 				let mut value = E::Fr::from_str("3").unwrap();
 				if i == 0  {
-					value = E::Fr::from_str("4").unwrap();
+					value = (E::Fr::from_repr((mb[i] as u64).into())).unwrap();
 				}
 				Ok(value)
 			});
@@ -636,9 +643,10 @@ mod test {
 	#[test]
 	fn test_lum_ssim() {
 		let mut cs = TestConstraintSystem::<Bls12>::new();
-
-		let var_src3x3 = gen_sample(cs.namespace(|| "src mb"));
-		let var_dst3x3 = gen_sample(cs.namespace(|| "dst mb"));
+		let src_mb = gen_mb(9);
+		let dst_mb = gen_mb(9);		
+		let var_src3x3 = gen_sample(cs.namespace(|| "src mb"), src_mb);
+		let var_dst3x3 = gen_sample(cs.namespace(|| "dst mb"), dst_mb);
 		let var_sum_src = sum_vec(cs.namespace(|| "src sum mb"), &var_src3x3).unwrap();
 		let var_sum_dst = sum_vec(cs.namespace(|| "dst sum mb"), &var_dst3x3).unwrap();
 		
@@ -649,13 +657,12 @@ mod test {
 		let sum_dst = var_sum_dst.get_value().unwrap().into_repr().0[0];
 		let var_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &var_sum_dst, sum_dst, num_samples).unwrap();
 
-		let l = ssim_lum(cs.namespace(|| "ssim lum"), &var_mean_src, &var_mean_dst, 0, 1);
+		let l = ssim_lum(cs.namespace(|| "ssim lum"), &var_mean_src, &var_mean_dst, 0, 18, 18);
 
 		print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());
-		let mean64 = 
+ 
 		print!("into_repr var_mean_src {:?}\n", var_mean_src.get_value().unwrap().into_repr());
-		print!("mean64 {:?}\n", mean64);
 		println!("{}", cs.pretty_print());
 		assert!(var_mean_src.get_value().unwrap() == Fr::from_str("3").unwrap());
 		assert!(cs.is_satisfied());
