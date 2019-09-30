@@ -169,12 +169,12 @@ pub fn div_constraint_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 }
 
 
-/// Implements div (i.e. div_constraint = sum / n) as mul (div_constraint * n = sum)
+/// Implements div (i.e. (numerator - reminder) / denom = quotient ) as mul (div_constraint * n = sum)
 pub fn div_constraint<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
 	numerator: &AllocatedPixel<E>,
 	numerator_u64: u64,
-	denom_u64: usize,
+	denom_u64: u64,
 ) -> Result<AllocatedPixel<E>, SynthesisError>
 {
 	let num_samples = AllocatedPixel::alloc(cs.namespace(|| "div"), || {
@@ -278,6 +278,48 @@ pub fn ssim_lum<E: Engine, CS: ConstraintSystem<E>>(
 		|lc| { lc + lum_denom.variable},
 	);	
 	Ok(lum_numerator)
+}
+
+pub fn sqrt_constraint_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	annotation: A,
+	sqr: &AllocatedPixel<E>,
+	sqrt: &AllocatedPixel<E>,
+	fract: &AllocatedPixel<E>,
+) where
+	A: FnOnce() -> AR,
+	AR: Into<String>,
+{
+	//  div_constraint * num_elems = sum
+
+	cs.enforce(
+		annotation,
+		|lc| { lc + sqrt.variable },	
+		|lc| { lc + sqrt.variable },
+		|lc| { lc + sqr.variable -  fract.variable},
+	);
+}
+/// Implements div (i.e. (numerator - reminder) / denom = quotient ) as mul (div_constraint * n = sum)
+pub fn sqrt_constraint<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	sqr: &AllocatedPixel<E>,
+	sqrt_u64: u64,
+	fract_u64: u64,
+) -> Result<AllocatedPixel<E>, SynthesisError>
+{
+	let squrt = AllocatedPixel::alloc(cs.namespace(|| "div"), || {
+		let value: E::Fr = (E::Fr::from_repr((sqrt_u64 as u64).into())).unwrap();
+		Ok(value)
+	})?;
+	
+	let fract = AllocatedPixel::alloc(cs.namespace(|| "quotient"), || {
+		let value: E::Fr = (E::Fr::from_repr(fract_u64.into())).unwrap();
+		Ok(value)
+	})?;
+	
+	sqrt_constraint_enforce(cs, || "sqrt_constraint enforce", &sqr, &squrt, &fract);
+
+	Ok(squrt)
 }
 
 /// Adds a constraint to CS, enforcing an equality relationship between the allocated numbers a and b.
@@ -397,8 +439,8 @@ fn diffsq<E: Engine, CS: ConstraintSystem<E>>(
 		Ok(tmp)
 	})?;
 
-	// a - b = res
-	difference(&mut cs, || "diffsq constraint", &a, &b, &res);
+	// (a - b) = res
+	diff_sq_enforce(&mut cs, || "diffsq constraint", &a, &b, &res);
 
 	Ok(res)
 }
@@ -438,58 +480,33 @@ fn diffmul<E: Engine, CS: ConstraintSystem<E>>(
 	mean_b: &AllocatedPixel<E>,
 ) -> Result<AllocatedPixel<E>, SynthesisError> {
 	let res = AllocatedPixel::alloc(cs.namespace(|| "diffmul"), || {
-		let mut tmpa = a
-			.get_value()
-			.ok_or_else(|| SynthesisError::AssignmentMissing)?;
-		tmpa.sub_assign(
-			&mean_a
-				.get_value()
-				.ok_or_else(|| SynthesisError::AssignmentMissing)?,
-		);
-		let mut tmpb = b
-			.get_value()
-			.ok_or_else(|| SynthesisError::AssignmentMissing)?;
-		tmpb.sub_assign(
-			&mean_b
-				.get_value()
-				.ok_or_else(|| SynthesisError::AssignmentMissing)?,
-		);
+		let mut tmpa = a.get_value().ok_or_else(|| SynthesisError::AssignmentMissing)?;
+		tmpa.sub_assign(&mean_a.get_value().ok_or_else(|| SynthesisError::AssignmentMissing)?,);
+		let mut tmpb = b.get_value().ok_or_else(|| SynthesisError::AssignmentMissing)?;
+		tmpb.sub_assign(&mean_b.get_value().ok_or_else(|| SynthesisError::AssignmentMissing)?,);
 		let mut tmp = tmpa;
 		tmp.mul_assign(&tmpb);
 		Ok(tmp)
 	})?;
-	// ()a - mean_a) * ()b - bmean) = res
-	diff_mul_enforce(
-		&mut cs,
-		|| "diffsq constraint",
-		&a,
-		&mean_a,
-		&b,
-		&mean_b,
-		&res,
-	);
+	// ()a - mean_a) * ()b - mean_b) = res
+	diff_mul_enforce(&mut cs,|| "diffsq constraint", &a, &mean_a, &b, &mean_b, &res,);
 
 	Ok(res)
 }
-pub fn variance<E: Engine, A, AR, CS: ConstraintSystem<E>>(
+pub fn variance<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
-	annotation: A,
 	a: &Vec<AllocatedPixel<E>>,
 	b: &Vec<AllocatedPixel<E>>,
 	mean_a: &AllocatedPixel<E>,
 	mean_b: &AllocatedPixel<E>,
 ) -> Result<AllocatedPixel<E>, SynthesisError>
-where
-	A: FnOnce() -> AR,
-	AR: Into<String>,
 {
 	let mb_size = a.len();
-	let mut varDiffSqMeanSrc: AllocatedPixel<E>;
 	let mut vecADiffMul: Vec<_> = Vec::new();
 	// sum diffsq src
 	for i in 0..mb_size {
 		let mut cs = cs.namespace(|| format!("diffsq {}", i));
-		let value_num = diffmul(cs, &a[i], &mean_b, &b[i], &mean_b)?;
+		let value_num = diffmul(cs, &a[i], &mean_a, &b[i], &mean_b)?;
 		vecADiffMul.push(value_num);
 	}
 
@@ -558,8 +575,29 @@ mod test {
 	use storage_proofs::circuit::test::*;
 
 	fn gen_mb(mb_size: usize ) -> Vec<u32>  {	
-		let mb: Vec<u32> = (0..mb_size).map(|x| 3).collect();
+		let mut rng = rand::thread_rng();
+		let mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
 		mb
+	}
+
+	fn get_mb_sum(mb: &Vec<u32> ) -> u32  {	
+		let sum = mb.iter().map(|x| x).sum();
+		sum
+	}
+	
+	fn get_sqrt(x: u32 ) -> (u32, u32)  {	
+		let sqrt_x = (x as f64).sqrt() as u32;
+		(sqrt_x, x - sqrt_x * sqrt_x)
+	}
+
+	fn get_mb_covariance(mb_src: &Vec<u32>, mb_dst: &Vec<u32>, mean_src: u32, mean_dst: u32 ) -> u32 {
+		let mut covar: i32 = 0;
+		for it in mb_src.iter().zip(mb_dst.iter()) {
+			let (src, dst) = it;
+    		covar = covar + (*src as i32 - mean_src as i32)  * (*src as i32 - mean_src as i32) * (*dst as i32 - mean_dst as i32) * (*dst as i32 - mean_dst as i32);
+		}
+		covar = covar  / mb_src.len() as i32;
+		covar as u32
 	}
 
 	fn gen_sample<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: Vec<u32> ) -> Vec<AllocatedPixel<E>>  {
@@ -568,10 +606,7 @@ mod test {
 		let mut var_pix3x3: Vec<AllocatedPixel<E>> = Vec::new();
 		for i in 0..mb.len() {
 			let value_num = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", i)), || {
-				let mut value = E::Fr::from_str("3").unwrap();
-				if i == 0  {
-					value = (E::Fr::from_repr((mb[i] as u64).into())).unwrap();
-				}
+				let value = (E::Fr::from_repr((mb[i] as u64).into())).unwrap();
 				Ok(value)
 			});
 			var_pix3x3.push(value_num.unwrap());
@@ -580,99 +615,78 @@ mod test {
 	}
 /*
 	#[test]
-	fn test_diffsq(){
-		let mut cs = TestConstraintSystem::<Bls12>::new();
-		let a_value = Some(Fr::from_str("5").unwrap());
-		let a = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", 1)), || {
-				a_value.ok_or_else(|| SynthesisError::AssignmentMissing)
-			}).unwrap();
-		let b_value = Some(Fr::from_str("3").unwrap());
-		let b = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", 2)), || {
-				b_value.ok_or_else(|| SynthesisError::AssignmentMissing)
-			}).unwrap();
-		let var_diff = diffsq(cs, &a, &b);
-		assert!(var_diff.unwrap().get_value().unwrap() == Fr::from_str("4").unwrap());	
-	}
-
-	#[test]
-	fn test_sumvec() {
-		let mut cs = TestConstraintSystem::<Bls12>::new();
-		let var_pix3x3 = gen_sample(&mut cs);
-		let sum = sum_vec(&mut cs, || "sum vec", &var_pix3x3);
-		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
-		assert!(sum.unwrap().get_value().unwrap() == Fr::from_str("27").unwrap());
-	}
-	
-*/	
-/*
-	#[test]
-	fn test_mean_decoupled_from_sum() {
-		let mut cs = TestConstraintSystem::<Bls12>::new();
-		let var_sum = AllocatedPixel::alloc(cs.namespace(|| format!("sum")), || {
-			let value = Some(Fr::from_str("28").unwrap());
-			print!("sum = {:?}", value );
-			value.ok_or_else(|| SynthesisError::AssignmentMissing)
-		});
-		let var_mean = div_constraint(&mut cs, || "test div_constraint", &var_sum.unwrap(), 28, 9);
-		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
-		print!("Num inputs: {:?}\n", cs.num_inputs());
-		print!("Num constraints: {:?}\n", cs.num_constraints());
-
-		assert!(var_mean.unwrap().get_value().unwrap() == Fr::from_str("3").unwrap());
-		assert!(cs.is_satisfied());
-	}
-*/	
-
-/*
-    #[test]
-	fn test_mean() {
-		let mut cs = TestConstraintSystem::<Bls12>::new();
-		let var_pix3x3 = gen_sample(&mut cs);
-		let var_sum = sum_vec(&mut cs, || "sum vec", &var_pix3x3).unwrap();
-		print!("Num inputs: {:?}\n", cs.num_inputs());
-		print!("Num constraints: {:?}\n", cs.num_constraints());		
-		let var_mean = div_constraint(&mut cs, || "test div_constraint", &var_sum, 28, 9);
-		//print!("Pixel variable={:?}", sum.unwrap().get_variable());
-		print!("Num inputs: {:?}\n", cs.num_inputs());
-		print!("Num constraints: {:?}\n", cs.num_constraints());
-
-		assert!(var_mean.unwrap().get_value().unwrap() == Fr::from_str("3").unwrap());
-		assert!(cs.is_satisfied());
-	}
-*/	
-	#[test]
 	fn test_lum_ssim() {
 		let mut cs = TestConstraintSystem::<Bls12>::new();
-		let src_mb = gen_mb(9);
-		let dst_mb = gen_mb(9);		
-		let var_src3x3 = gen_sample(cs.namespace(|| "src mb"), src_mb);
-		let var_dst3x3 = gen_sample(cs.namespace(|| "dst mb"), dst_mb);
+		let src_mb = gen_mb(256);
+		let dst_mb = gen_mb(256);		
+		let var_src3x3 = gen_sample(cs.namespace(|| "src mb"), src_mb.clone());
+		let var_dst3x3 = gen_sample(cs.namespace(|| "dst mb"), dst_mb.clone());
 		let var_sum_src = sum_vec(cs.namespace(|| "src sum mb"), &var_src3x3).unwrap();
 		let var_sum_dst = sum_vec(cs.namespace(|| "dst sum mb"), &var_dst3x3).unwrap();
 		
-		let sum_src = var_sum_src.get_value().unwrap().into_repr().0[0];
-		let num_samples = var_src3x3.len();
-		let var_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &var_sum_src, sum_src, num_samples).unwrap();
+		let num_samples = var_src3x3.len() as u32;
 
-		let sum_dst = var_sum_dst.get_value().unwrap().into_repr().0[0];
-		let var_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &var_sum_dst, sum_dst, num_samples).unwrap();
+		let sum_src = get_mb_sum(&src_mb);
+		let var_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &var_sum_src, sum_src as u64, num_samples as u64).unwrap();
 
-		let l = ssim_lum(cs.namespace(|| "ssim lum"), &var_mean_src, &var_mean_dst, 0, 18, 18);
-
+		let sum_dst = get_mb_sum(&dst_mb);
+		let var_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &var_sum_dst, sum_dst as u64, num_samples as u64).unwrap();
+		let c1 = 0;
+		let l_numerator = 2 * (sum_src / num_samples) * (sum_dst / num_samples) + c1; 
+		let l_denom = ((sum_src / num_samples) * (sum_src / num_samples) + (sum_dst / num_samples) * (sum_dst / num_samples)) + c1;
+		let l = ssim_lum(cs.namespace(|| "ssim lum"), &var_mean_src, &var_mean_dst, c1 as u64, l_numerator as u64, l_denom as u64);
+		print!("inputs l_numerator={:?} l_denom={:?}\n", l_numerator, l_denom);
 		print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());
  
 		print!("into_repr var_mean_src {:?}\n", var_mean_src.get_value().unwrap().into_repr());
-		println!("{}", cs.pretty_print());
-		assert!(var_mean_src.get_value().unwrap() == Fr::from_str("3").unwrap());
+		//println!("{}", cs.pretty_print());
+		assert!(var_mean_src.get_value().unwrap() == (Fr::from_repr(((sum_src/num_samples) as u64).into())).unwrap());
 		assert!(cs.is_satisfied());
 	}
-	
-	/*	#[test]
-		fn test_ssim_circuit_proof_verify() {
-			let _src_pixel: Vec<u32> = (0..256).map(|x| x).collect();
-			let _dst_pixel: Vec<u32> = (0..256).map(|x| x).collect();
-			ssim_circuit_proof_verify(_src_pixel, _dst_pixel);
-		}
-	*/
+*/	
+	#[test]
+	fn test_struct_ssim() {
+		let mut cs = TestConstraintSystem::<Bls12>::new();
+		let src_mb = gen_mb(9);
+		let dst_mb = gen_mb(9);		
+		let var_src3x3 = gen_sample(cs.namespace(|| "src mb"), src_mb.clone());
+		let var_dst3x3 = gen_sample(cs.namespace(|| "dst mb"), dst_mb.clone());
+		let var_sum_src = sum_vec(cs.namespace(|| "src sum mb"), &var_src3x3).unwrap();
+		let var_sum_dst = sum_vec(cs.namespace(|| "dst sum mb"), &var_dst3x3).unwrap();
+		
+		let witness_num_samples = var_src3x3.len() as u32;
+
+		let witness_sum_src = get_mb_sum(&src_mb);
+		let circ_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &var_sum_src, witness_sum_src as u64, witness_num_samples as u64).unwrap();
+
+		let witness_sum_dst = get_mb_sum(&dst_mb);
+		let circ_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &var_sum_dst, witness_sum_dst as u64, witness_num_samples as u64).unwrap();
+
+
+		// Structure
+		let withness_variance_src = get_mb_covariance(&src_mb, &src_mb, witness_sum_src / witness_num_samples, witness_sum_src / witness_num_samples);
+		let circ_variance_src = variance(cs.namespace(|| "variance src"), &var_src3x3, &var_src3x3, &circ_mean_src, &circ_mean_src).unwrap();
+		let (withness_variance_sqrt_src, withness_variance_reminder_src) = get_sqrt(withness_variance_src);
+		//let circ_sigma_src = div_constraint(cs.namespace(|| "sigma src"), &circ_variance_src, withness_variance_src as u64, withness_variance_sqrt_src as u64).unwrap();
+
+		
+		let withness_variance_dst = get_mb_covariance(&dst_mb, &dst_mb, witness_sum_dst / witness_num_samples, witness_sum_dst / witness_num_samples);
+		let circ_variance_dst = variance(cs.namespace(|| "variance dst"), &var_dst3x3, &var_dst3x3, &circ_mean_dst, &circ_mean_dst).unwrap();
+
+		let withness_covariance = get_mb_covariance(&src_mb, &dst_mb, witness_sum_src / witness_num_samples, witness_sum_dst/ witness_num_samples);
+		let circ_covariance = variance(cs.namespace(|| "covariance"), &var_src3x3, &var_dst3x3, &circ_mean_src, &circ_mean_dst).unwrap();
+		let (withness_covariance_sqrt, withness_covariance_reminder) = get_sqrt(withness_covariance);
+		let s_numerator = sqrt_constraint(cs.namespace(|| "sigma xy"), &circ_covariance, withness_covariance as u64, withness_covariance_sqrt as u64).unwrap();
+
+		let c3 = 0;
+		//let s_numerator = 2 * (sum_src / num_samples) * (sum_dst / num_samples) + c3; 
+		//let s_denom = ((sum_src / num_samples) * (sum_src / num_samples) + (sum_dst / num_samples) * (sum_dst / num_samples)) + c1;
+		//let s = ssim_struct(cs.namespace(|| "ssim lum"), &var_mean_src, &var_mean_dst, c1 as u64, l_numerator as u64, l_denom as u64);
+		//print!("inputs l_numerator={:?} l_denom={:?}\n", l_numerator, l_denom);
+		print!("Num inputs: {:?}\n", cs.num_inputs());
+		print!("Num constraints: {:?}\n", cs.num_constraints());
+		print!("withness_covariance={:?} sqrt={:?} rem={:?}",withness_covariance, withness_covariance_sqrt, withness_covariance_reminder);
+		assert!(cs.is_satisfied());
+	}	
 }
