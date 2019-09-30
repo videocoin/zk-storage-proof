@@ -11,6 +11,7 @@ use paired::Engine;
 use super::pixel::*;
 use ff::{BitIterator, Field, PrimeField, PrimeFieldRepr};
 use fil_sapling_crypto::circuit::{boolean, multipack, num, pedersen_hash};
+
 use rand::{Rng, SeedableRng, XorShiftRng};
 use std::sync::{Arc, RwLock};
 use storage_proofs::fr32::fr_into_bytes;
@@ -594,7 +595,7 @@ mod test {
 		let mut covar: i32 = 0;
 		for it in mb_src.iter().zip(mb_dst.iter()) {
 			let (src, dst) = it;
-    		covar = covar + (*src as i32 - mean_src as i32)  * (*src as i32 - mean_src as i32) * (*dst as i32 - mean_dst as i32) * (*dst as i32 - mean_dst as i32);
+    		covar = covar + (*src as i32 - mean_src as i32)  * (*dst as i32 - mean_dst as i32);
 		}
 		covar = covar  / mb_src.len() as i32;
 		covar as u32
@@ -613,6 +614,19 @@ mod test {
 		}
 		var_pix3x3
 	}
+
+	fn gen_sample_sign<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: &Vec<u32>, mean: u32 ) -> Vec<boolean::AllocatedBit>  {
+		let mut var_sign: Vec<boolean::AllocatedBit> = Vec::new();
+		for i in 0..mb.len() {
+			let cur_sign = boolean::Boolean::from(boolean::AllocatedBit::alloc(
+                cs.namespace(|| format!("sign {}", i)),
+                if mb[i] > mean {Some(true)} else {Some(false)},
+            ));
+			var_sign.push(cur_sign.unwrap());
+		}
+		var_sign
+	}
+	
 /*
 	#[test]
 	fn test_lum_ssim() {
@@ -675,6 +689,7 @@ mod test {
 		let circ_variance_dst = variance(cs.namespace(|| "variance dst"), &var_dst3x3, &var_dst3x3, &circ_mean_dst, &circ_mean_dst).unwrap();
 
 		let withness_covariance = get_mb_covariance(&src_mb, &dst_mb, witness_sum_src / witness_num_samples, witness_sum_dst/ witness_num_samples);
+		let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &src_mb, witness_sum_src / witness_num_samples);
 		let circ_covariance = variance(cs.namespace(|| "covariance"), &var_src3x3, &var_dst3x3, &circ_mean_src, &circ_mean_dst).unwrap();
 		let (withness_covariance_sqrt, withness_covariance_reminder) = get_sqrt(withness_covariance);
 		let s_numerator = sqrt_constraint(cs.namespace(|| "sigma xy"), &circ_covariance, withness_covariance as u64, withness_covariance_sqrt as u64).unwrap();
