@@ -494,12 +494,53 @@ fn diffmul<E: Engine, CS: ConstraintSystem<E>>(
 
 	Ok(res)
 }
+
+pub fn absdiff_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
+	cs: &mut CS,
+	annotation: A,
+	a: &AllocatedPixel<E>,
+	mean_a: &AllocatedPixel<E>,
+	absdiff: &AllocatedPixel<E>,
+) where
+	A: FnOnce() -> AR,
+	AR: Into<String>,
+{
+
+	cs.enforce(
+		annotation,
+		|lc| lc + a.get_variable() - mean_a.get_variable(),
+		|lc| lc + CS::one(),
+		|lc| lc + absdiff.get_variable(),
+	);
+}
+
+fn absdiff<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	a: &AllocatedPixel<E>,
+	mean_a: &AllocatedPixel<E>,
+	sign: boolean::AllocatedBit,
+) -> Result<AllocatedPixel<E>, SynthesisError> {
+		
+	let (c, d) = AllocatedPixel::conditionally_reverse(&mut cs, &a, &mean_a,  &boolean::Boolean::Is(sign)).unwrap();
+	let res = AllocatedPixel::alloc(cs.namespace(|| "absdiff"), || {
+		let mut tmp = c.get_value().ok_or_else(|| SynthesisError::AssignmentMissing)?;
+		tmp.sub_assign(&d.get_value().ok_or_else(|| SynthesisError::AssignmentMissing)?,);
+		Ok(tmp)
+	})?;
+	// ()a - mean_a) * ()b - mean_b) = res
+	absdiff_enforce(&mut cs,|| "diffsq constraint", &c, &d, &res,);
+
+	Ok(res)
+}
+
 pub fn variance<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
 	a: &Vec<AllocatedPixel<E>>,
 	b: &Vec<AllocatedPixel<E>>,
 	mean_a: &AllocatedPixel<E>,
 	mean_b: &AllocatedPixel<E>,
+	sign_a: &Vec<boolean::AllocatedBit>,
+	sign_b: &Vec<boolean::AllocatedBit>,	
 ) -> Result<AllocatedPixel<E>, SynthesisError>
 {
 	let mb_size = a.len();
@@ -507,7 +548,11 @@ pub fn variance<E: Engine, CS: ConstraintSystem<E>>(
 	// sum diffsq src
 	for i in 0..mb_size {
 		let mut cs = cs.namespace(|| format!("diffsq {}", i));
-		let value_num = diffmul(cs, &a[i], &mean_a, &b[i], &mean_b)?;
+		
+		//let value_num = diffmul(cs, &a[i], &mean_a, &b[i], &mean_b)?;
+		let abs_diff_a = absdiff(cs.namespace(|| format!("diff a {}", i)), &a[i], &mean_a, sign_a[i].clone()).unwrap();
+		let abs_diff_b = absdiff(cs.namespace(|| format!("diff b {}", i)), &b[i], &mean_b, sign_b[i].clone()).unwrap();
+		let value_num = abs_diff_a.mul(cs.namespace(|| format!("diff ab {}", i)), &abs_diff_b).unwrap();
 		vecADiffMul.push(value_num);
 	}
 
@@ -592,13 +637,17 @@ mod test {
 	}
 
 	fn get_mb_covariance(mb_src: &Vec<u32>, mb_dst: &Vec<u32>, mean_src: u32, mean_dst: u32 ) -> u32 {
-		let mut covar: i32 = 0;
+		let mut covar: u32 = 0;
 		for it in mb_src.iter().zip(mb_dst.iter()) {
 			let (src, dst) = it;
-    		covar = covar + (*src as i32 - mean_src as i32)  * (*dst as i32 - mean_dst as i32);
+			let  mut a_diff: u32  = 0;
+			let  mut b_diff: u32  = 0;
+			if *src > mean_src {a_diff = *src  - mean_src} else {a_diff = mean_src - *src};
+			if *dst > mean_dst {b_diff = *dst  - mean_dst} else {b_diff = mean_dst - *dst};
+    		covar = covar + a_diff  * b_diff;
 		}
-		covar = covar  / mb_src.len() as i32;
-		covar as u32
+		covar = covar  / mb_src.len() as u32;
+		covar
 	}
 
 	fn gen_sample<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: Vec<u32> ) -> Vec<AllocatedPixel<E>>  {
@@ -618,10 +667,10 @@ mod test {
 	fn gen_sample_sign<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: &Vec<u32>, mean: u32 ) -> Vec<boolean::AllocatedBit>  {
 		let mut var_sign: Vec<boolean::AllocatedBit> = Vec::new();
 		for i in 0..mb.len() {
-			let cur_sign = boolean::Boolean::from(boolean::AllocatedBit::alloc(
+			let cur_sign = boolean::AllocatedBit::alloc(
                 cs.namespace(|| format!("sign {}", i)),
-                if mb[i] > mean {Some(true)} else {Some(false)},
-            ));
+                if mb[i] > mean {Some(false)} else {Some(true)},
+            );
 			var_sign.push(cur_sign.unwrap());
 		}
 		var_sign
@@ -679,18 +728,21 @@ mod test {
 
 
 		// Structure
+		let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &src_mb, witness_sum_src / witness_num_samples);
+		let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &src_mb, witness_sum_dst / witness_num_samples);
+		
 		let withness_variance_src = get_mb_covariance(&src_mb, &src_mb, witness_sum_src / witness_num_samples, witness_sum_src / witness_num_samples);
-		let circ_variance_src = variance(cs.namespace(|| "variance src"), &var_src3x3, &var_src3x3, &circ_mean_src, &circ_mean_src).unwrap();
+		let circ_variance_src = variance(cs.namespace(|| "variance src"), &var_src3x3, &var_src3x3, &circ_mean_src, &circ_mean_src,  &circ_src_sign, &circ_src_sign).unwrap();
 		let (withness_variance_sqrt_src, withness_variance_reminder_src) = get_sqrt(withness_variance_src);
 		//let circ_sigma_src = div_constraint(cs.namespace(|| "sigma src"), &circ_variance_src, withness_variance_src as u64, withness_variance_sqrt_src as u64).unwrap();
 
 		
 		let withness_variance_dst = get_mb_covariance(&dst_mb, &dst_mb, witness_sum_dst / witness_num_samples, witness_sum_dst / witness_num_samples);
-		let circ_variance_dst = variance(cs.namespace(|| "variance dst"), &var_dst3x3, &var_dst3x3, &circ_mean_dst, &circ_mean_dst).unwrap();
+		let circ_variance_dst = variance(cs.namespace(|| "variance dst"), &var_dst3x3, &var_dst3x3, &circ_mean_dst, &circ_mean_dst,  &circ_dst_sign, &circ_dst_sign).unwrap();
 
 		let withness_covariance = get_mb_covariance(&src_mb, &dst_mb, witness_sum_src / witness_num_samples, witness_sum_dst/ witness_num_samples);
-		let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &src_mb, witness_sum_src / witness_num_samples);
-		let circ_covariance = variance(cs.namespace(|| "covariance"), &var_src3x3, &var_dst3x3, &circ_mean_src, &circ_mean_dst).unwrap();
+		
+		let circ_covariance = variance(cs.namespace(|| "covariance"), &var_src3x3, &var_dst3x3, &circ_mean_src, &circ_mean_dst, &circ_src_sign, &circ_dst_sign).unwrap();
 		let (withness_covariance_sqrt, withness_covariance_reminder) = get_sqrt(withness_covariance);
 		let s_numerator = sqrt_constraint(cs.namespace(|| "sigma xy"), &circ_covariance, withness_covariance as u64, withness_covariance_sqrt as u64).unwrap();
 
