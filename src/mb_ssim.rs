@@ -575,25 +575,38 @@ fn absdiff<E: Engine, CS: ConstraintSystem<E>>(
 	Ok(res)
 }
 
-pub fn variance<E: Engine, CS: ConstraintSystem<E>>(
+pub fn absdiff_vec<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
 	a: &Vec<AllocatedPixel<E>>,
-	b: &Vec<AllocatedPixel<E>>,
 	mean_a: &AllocatedPixel<E>,
-	mean_b: &AllocatedPixel<E>,
 	sign_a: &Vec<boolean::AllocatedBit>,
-	sign_b: &Vec<boolean::AllocatedBit>,	
-) -> Result<AllocatedPixel<E>, SynthesisError>
+) -> Vec<AllocatedPixel<E>>
 {
 	let mb_size = a.len();
+	let mut diff_vec: Vec<_> = Vec::new();
+	for i in 0..mb_size {
+		let abs_diff = absdiff(cs.namespace(|| format!("diff a {}", i)), &a[i], &mean_a, sign_a[i].clone()).unwrap();
+		diff_vec.push(abs_diff);
+	}
+	diff_vec
+}
+
+pub fn variance<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	diff_vec_a: &Vec<AllocatedPixel<E>>,
+	diff_vec_b: &Vec<AllocatedPixel<E>>,	
+) -> Result<AllocatedPixel<E>, SynthesisError>
+{
+	let mb_size = diff_vec_a.len();
 	let mut diff_prod_vec: Vec<_> = Vec::new();
-	// sum diffsq src
+	//let mut diff_vec_a = absdiff_vec(cs.namespace(|| "absdiff a"), a, mean_a, sign_a);
+	//let mut diff_vec_b = absdiff_vec(cs.namespace(|| "abs diff b"), b, mean_b, sign_b);
 	for i in 0..mb_size {
 		let mut cs = cs.namespace(|| format!("diffsq {}", i));
 		
 		//let value_num = diffmul(cs, &a[i], &mean_a, &b[i], &mean_b)?;
-		let abs_diff_a = absdiff(cs.namespace(|| format!("diff a {}", i)), &a[i], &mean_a, sign_a[i].clone()).unwrap();
-		let abs_diff_b = absdiff(cs.namespace(|| format!("diff b {}", i)), &b[i], &mean_b, sign_b[i].clone()).unwrap();
+		let abs_diff_a = &diff_vec_a[i];//absdiff(cs.namespace(|| format!("diff a {}", i)), &a[i], &mean_a, sign_a[i].clone()).unwrap();
+		let abs_diff_b = &diff_vec_b[i];//absdiff(cs.namespace(|| format!("diff b {}", i)), &b[i], &mean_b, sign_b[i].clone()).unwrap();
 		//let value_num = abs_diff_a.mul(cs.namespace(|| format!("diff ab {}", i)), &abs_diff_b).unwrap();
 		let value_num = mul(cs.namespace(|| format!("diff ab {}", i)), &abs_diff_a, &abs_diff_b).unwrap();
 		print!("variance elem pass1 = {:?}\n", value_num.get_value().unwrap());
@@ -753,8 +766,8 @@ mod test {
 	#[test]
 	fn test_struct_ssim() {
 		let mut cs = TestConstraintSystem::<Bls12>::new();
-		let src_mb = gen_mb(9);
-		let dst_mb = gen_mb(9);		
+		let src_mb = gen_mb(256);
+		let dst_mb = gen_mb(256);		
 		let var_src3x3 = gen_sample(cs.namespace(|| "src mb"), src_mb.clone());
 		let var_dst3x3 = gen_sample(cs.namespace(|| "dst mb"), dst_mb.clone());
 		let var_sum_src = sum_vec(cs.namespace(|| "src sum mb"), &var_src3x3).unwrap();
@@ -773,24 +786,28 @@ mod test {
 		let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &src_mb, witness_sum_src / witness_num_samples);
 		let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &dst_mb, witness_sum_dst / witness_num_samples);
 		
+		let mut circ_diff_vec_src = absdiff_vec(cs.namespace(|| "absdiff a"), &var_src3x3, &circ_mean_src, &circ_src_sign);
+		let mut circ_diff_vec_dst = absdiff_vec(cs.namespace(|| "abs diff b"),  &var_dst3x3, &circ_mean_dst, &circ_dst_sign);
+	
 		let withness_variance_src_sum = get_mb_covariance(&src_mb, &src_mb, witness_sum_src / witness_num_samples, witness_sum_src / witness_num_samples);
 		let withness_variance_src = withness_variance_src_sum / witness_num_samples;
-		let circ_variance_src = variance(cs.namespace(|| "variance src"), &var_src3x3, &var_src3x3, &circ_mean_src, &circ_mean_src,  &circ_src_sign, &circ_src_sign).unwrap();
-		let (withness_variance_sqrt_src, withness_variance_reminder_src) = get_sqrt(withness_variance_src);
-		//let circ_sigma_src = div_constraint(cs.namespace(|| "sigma src"), &circ_variance_src, withness_variance_src as u64, withness_variance_sqrt_src as u64).unwrap();
+		let circ_sigma_x_sq_sum = variance(cs.namespace(|| "variance src"), &circ_diff_vec_src, &circ_diff_vec_src).unwrap();
+		let (withness_sigma_x, withness_sigma_x_frac) = get_sqrt(withness_variance_src);
+		let circ_sigma_x_sq = div_constraint(cs.namespace(|| "sigmax sq src"), &circ_sigma_x_sq_sum, withness_variance_src_sum as u64, witness_num_samples as u64).unwrap();
+		let circ_sigma_x = sqrt_constraint(cs.namespace(|| "sigma x"), &circ_sigma_x_sq, withness_sigma_x as u64, withness_sigma_x_frac as u64).unwrap();
 
 		
 		let withness_variance_dst_sum = get_mb_covariance(&dst_mb, &dst_mb, witness_sum_dst / witness_num_samples, witness_sum_dst / witness_num_samples);
 		let withness_variance_dst = withness_variance_dst_sum / witness_num_samples;
-		let circ_variance_dst = variance(cs.namespace(|| "variance dst"), &var_dst3x3, &var_dst3x3, &circ_mean_dst, &circ_mean_dst,  &circ_dst_sign, &circ_dst_sign).unwrap();
+		let circ_variance_dst = variance(cs.namespace(|| "variance dst"), &circ_diff_vec_dst, &circ_diff_vec_dst).unwrap();
+		let (withness_sigma_y, withness_sigma_y_frac) = get_sqrt(withness_variance_dst);
+		let circ_sigma_y_sq_ = div_constraint(cs.namespace(|| "sigmax sq dst"), &circ_variance_dst, withness_variance_dst_sum as u64, witness_num_samples as u64).unwrap();
+		let circ_sigma_y = sqrt_constraint(cs.namespace(|| "sigma y"), &circ_sigma_y_sq_, withness_sigma_y as u64, withness_sigma_y_frac as u64).unwrap();
 
 		let withness_covariance_sum = get_mb_covariance(&src_mb, &dst_mb, witness_sum_src / witness_num_samples, witness_sum_dst/ witness_num_samples);
-		let withness_covariance = withness_covariance_sum /  witness_num_samples;
-		
-		let circ_covariance_sum = variance(cs.namespace(|| "covariance sum"), &var_src3x3, &var_dst3x3, &circ_mean_src, &circ_mean_dst, &circ_src_sign, &circ_dst_sign).unwrap();
+		let withness_covariance = withness_covariance_sum /  witness_num_samples;		
+		let circ_covariance_sum = variance(cs.namespace(|| "covariance sum"), &circ_diff_vec_src, &circ_diff_vec_dst).unwrap();
 		let circ_covariance = div_constraint(cs.namespace(|| "covariance"), &circ_covariance_sum, withness_covariance_sum as u64, witness_num_samples as u64).unwrap();
-
-
 		let (withness_covariance_sqrt, withness_covariance_frac) = get_sqrt(withness_covariance);
 		let circ_covar_sqrt = sqrt_constraint(cs.namespace(|| "sigma xy"), &circ_covariance, withness_covariance_sqrt as u64, withness_covariance_frac as u64).unwrap();
 
