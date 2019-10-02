@@ -626,6 +626,62 @@ pub fn variance<E: Engine, CS: ConstraintSystem<E>>(
 	Ok(num_value)
 }
 
+pub fn covairance_constraint<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS, 
+	circ_abs_diff_vec_x: &Vec<AllocatedPixel<E>>, 
+	cirs_abs_diff_vec_y: &Vec<AllocatedPixel<E>>,
+	witness_sigma_sq_sum: u32,
+	withness_sigma: u32,
+	withness_sigma_frac: u32,
+	) -> (AllocatedPixel<E>, AllocatedPixel<E>, AllocatedPixel<E>) {
+	let witness_num_samples = circ_abs_diff_vec_x.len();
+	let circ_sigma_sq_sum = variance(cs.namespace(|| "covariance sum"), &circ_abs_diff_vec_x, &cirs_abs_diff_vec_y).unwrap();
+	let circ_sigma_sq = div_constraint(cs.namespace(|| "sigma sq sum"), &circ_sigma_sq_sum, witness_sigma_sq_sum as u64, witness_num_samples as u64).unwrap();
+	let circ_sigma = sqrt_constraint(cs.namespace(|| "sigma"), &circ_sigma_sq, withness_sigma as u64, withness_sigma_frac as u64).unwrap();
+	(circ_sigma_sq_sum, circ_sigma_sq, circ_sigma)
+}
+
+
+pub fn ssim_struct<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	sigma_xy: &AllocatedPixel<E>,
+	sigma_x: &AllocatedPixel<E>,
+	sigma_y: &AllocatedPixel<E>,
+	witness_c3: u64,
+	witness_s_numerator: u64,
+	witness_s_denominator: u64,
+) -> Result<AllocatedPixel<E>, SynthesisError>//-> (AllocatedPixel<E>, AllocatedPixel<E>)
+{
+	let circ_c3 = AllocatedPixel::alloc(cs.namespace(|| "c3"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_c3 as u64).into())).unwrap();
+		Ok(value)
+	})?;
+
+	let s_numerator = AllocatedPixel::alloc(cs.namespace(|| "lum numerator"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_s_numerator as u64).into())).unwrap();
+		Ok(value)
+	})?;	
+	cs.enforce(	|| "enforce lum numerator", 
+		|lc| { 
+			lc +  sigma_xy.variable + circ_c3.variable
+		}, 	
+		|lc| { lc + CS::one() },
+		|lc| { lc + s_numerator.variable},
+	);	
+
+	let s_denom = AllocatedPixel::alloc(cs.namespace(|| "s denom"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_s_denominator as u64).into())).unwrap();
+		Ok(value)
+	})?;	
+	cs.enforce(	|| "enforce lum denom", 
+		|lc| { lc + sigma_x.variable}, 	
+		|lc| { lc + sigma_y.variable },
+		|lc| { lc + s_denom.variable - circ_c3.variable},
+	);	
+	//(s_numerator, s_denom)
+	Ok(s_denom)
+}
+
 pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
 	use bellperson::groth16::{
 		create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof, Proof,
@@ -676,6 +732,11 @@ mod test {
 	use super::*;
 	use storage_proofs::circuit::test::*;
 
+	///
+	/// Utility functions
+	///
+	
+	/// generate random input macroblock
 	fn gen_mb(mb_size: usize ) -> Vec<u32>  {	
 		let mut rng = rand::thread_rng();
 		let mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
@@ -704,7 +765,18 @@ mod test {
 		}
 		covar
 	}
-
+	
+	fn get_witness(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> (u32, u32, u32, u32) {
+		
+		let sum_src = get_mb_sum(src_mb);
+		let sum_dst = get_mb_sum(dst_mb);
+		let num_samples: u32 = src_mb.len() as u32;
+		let sigma_sq_sum = get_mb_covariance(&src_mb, &dst_mb, sum_src / num_samples, sum_dst/ num_samples);
+		let sigma_sq = sigma_sq_sum / num_samples;		
+		let (sigma, sigma_frac) = get_sqrt(sigma_sq);
+		(sigma_sq_sum, sigma_sq, sigma, sigma_frac)
+	}
+	
 	fn gen_sample<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: Vec<u32> ) -> Vec<AllocatedPixel<E>>  {
 		// Prepare 3x3 test vector
 
@@ -731,38 +803,6 @@ mod test {
 		var_sign
 	}
 	
-/*
-	#[test]
-	fn test_lum_ssim() {
-		let mut cs = TestConstraintSystem::<Bls12>::new();
-		let src_mb = gen_mb(256);
-		let dst_mb = gen_mb(256);		
-		let var_src3x3 = gen_sample(cs.namespace(|| "src mb"), src_mb.clone());
-		let var_dst3x3 = gen_sample(cs.namespace(|| "dst mb"), dst_mb.clone());
-		let var_sum_src = sum_vec(cs.namespace(|| "src sum mb"), &var_src3x3).unwrap();
-		let var_sum_dst = sum_vec(cs.namespace(|| "dst sum mb"), &var_dst3x3).unwrap();
-		
-		let num_samples = var_src3x3.len() as u32;
-
-		let sum_src = get_mb_sum(&src_mb);
-		let var_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &var_sum_src, sum_src as u64, num_samples as u64).unwrap();
-
-		let sum_dst = get_mb_sum(&dst_mb);
-		let var_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &var_sum_dst, sum_dst as u64, num_samples as u64).unwrap();
-		let c1 = 0;
-		let l_numerator = 2 * (sum_src / num_samples) * (sum_dst / num_samples) + c1; 
-		let l_denom = ((sum_src / num_samples) * (sum_src / num_samples) + (sum_dst / num_samples) * (sum_dst / num_samples)) + c1;
-		let l = ssim_lum(cs.namespace(|| "ssim lum"), &var_mean_src, &var_mean_dst, c1 as u64, l_numerator as u64, l_denom as u64);
-		print!("inputs l_numerator={:?} l_denom={:?}\n", l_numerator, l_denom);
-		print!("Num inputs: {:?}\n", cs.num_inputs());
-		print!("Num constraints: {:?}\n", cs.num_constraints());
- 
-		print!("into_repr var_mean_src {:?}\n", var_mean_src.get_value().unwrap().into_repr());
-		//println!("{}", cs.pretty_print());
-		assert!(var_mean_src.get_value().unwrap() == (Fr::from_repr(((sum_src/num_samples) as u64).into())).unwrap());
-		assert!(cs.is_satisfied());
-	}
-*/	
 	#[test]
 	fn test_struct_ssim() {
 		let mut cs = TestConstraintSystem::<Bls12>::new();
@@ -781,45 +821,52 @@ mod test {
 		let witness_sum_dst = get_mb_sum(&dst_mb);
 		let circ_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &var_sum_dst, witness_sum_dst as u64, witness_num_samples as u64).unwrap();
 
-
+		//
+		// Lumen
+		//
+		let c1 = 0;
+		let witness_l_numerator = 2 * (witness_sum_src / witness_num_samples) * (witness_sum_dst / witness_num_samples) + c1; 
+		let witness_l_denom = ((witness_sum_src / witness_num_samples) * (witness_sum_src / witness_num_samples) + (witness_sum_dst / witness_num_samples) * (witness_sum_dst / witness_num_samples)) + c1;
+		let circ_l = ssim_lum(cs.namespace(|| "ssim lum"), &circ_mean_src, &circ_mean_dst, c1 as u64, witness_l_numerator as u64, witness_l_denom as u64);
+		
+		//
 		// Structure
+		//
 		let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &src_mb, witness_sum_src / witness_num_samples);
 		let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &dst_mb, witness_sum_dst / witness_num_samples);
 		
 		let mut circ_diff_vec_src = absdiff_vec(cs.namespace(|| "absdiff a"), &var_src3x3, &circ_mean_src, &circ_src_sign);
 		let mut circ_diff_vec_dst = absdiff_vec(cs.namespace(|| "abs diff b"),  &var_dst3x3, &circ_mean_dst, &circ_dst_sign);
 	
-		let withness_variance_src_sum = get_mb_covariance(&src_mb, &src_mb, witness_sum_src / witness_num_samples, witness_sum_src / witness_num_samples);
-		let withness_variance_src = withness_variance_src_sum / witness_num_samples;
-		let circ_sigma_x_sq_sum = variance(cs.namespace(|| "variance src"), &circ_diff_vec_src, &circ_diff_vec_src).unwrap();
-		let (withness_sigma_x, withness_sigma_x_frac) = get_sqrt(withness_variance_src);
-		let circ_sigma_x_sq = div_constraint(cs.namespace(|| "sigmax sq src"), &circ_sigma_x_sq_sum, withness_variance_src_sum as u64, witness_num_samples as u64).unwrap();
-		let circ_sigma_x = sqrt_constraint(cs.namespace(|| "sigma x"), &circ_sigma_x_sq, withness_sigma_x as u64, withness_sigma_x_frac as u64).unwrap();
+		let (withness_sigma_x_sq_sum, withness_sigma_x_sq, withness_sigma_x, withness_sigma_x_frac)= get_witness(&src_mb, &src_mb);		
+		let (circ_sigma_x_sq_sum, circ_sigma_x_sq, circ_sigma_x) = covairance_constraint(cs.namespace(|| "sigma x const"), 
+				&circ_diff_vec_src, &circ_diff_vec_src, withness_sigma_x_sq_sum, withness_sigma_x, withness_sigma_x_frac);
 
+		let (withness_sigma_y_sq_sum, withness_sigma_y_sq, withness_sigma_y, withness_sigma_y_frac)= get_witness(&dst_mb, &dst_mb);
+		let (circ_sigma_y_sq_sum, circ_sigma_y_sq, circ_sigma_y) = covairance_constraint(cs.namespace(|| "sigma y const"), 
+				&circ_diff_vec_dst, &circ_diff_vec_dst, withness_sigma_y_sq_sum, withness_sigma_y, withness_sigma_y_frac);
+
+		let (withness_sigma_xy_sq_sum, withness_sigma_xy_sq, withness_sigma_xy, withness_sigma_xy_frac)= get_witness(&src_mb, &dst_mb);
+		let (circ_sigma_xy_sq_sum, circ_sigma_xy_sq, circ_sigma_xy) = covairance_constraint(cs.namespace(|| "sigma xy const"), 
+				&circ_diff_vec_src, &circ_diff_vec_dst, withness_sigma_xy_sq_sum, withness_sigma_xy, withness_sigma_xy_frac);
 		
-		let withness_variance_dst_sum = get_mb_covariance(&dst_mb, &dst_mb, witness_sum_dst / witness_num_samples, witness_sum_dst / witness_num_samples);
-		let withness_variance_dst = withness_variance_dst_sum / witness_num_samples;
-		let circ_variance_dst = variance(cs.namespace(|| "variance dst"), &circ_diff_vec_dst, &circ_diff_vec_dst).unwrap();
-		let (withness_sigma_y, withness_sigma_y_frac) = get_sqrt(withness_variance_dst);
-		let circ_sigma_y_sq_ = div_constraint(cs.namespace(|| "sigmax sq dst"), &circ_variance_dst, withness_variance_dst_sum as u64, witness_num_samples as u64).unwrap();
-		let circ_sigma_y = sqrt_constraint(cs.namespace(|| "sigma y"), &circ_sigma_y_sq_, withness_sigma_y as u64, withness_sigma_y_frac as u64).unwrap();
-
-		let withness_covariance_sum = get_mb_covariance(&src_mb, &dst_mb, witness_sum_src / witness_num_samples, witness_sum_dst/ witness_num_samples);
-		let withness_covariance = withness_covariance_sum /  witness_num_samples;		
-		let circ_covariance_sum = variance(cs.namespace(|| "covariance sum"), &circ_diff_vec_src, &circ_diff_vec_dst).unwrap();
-		let circ_covariance = div_constraint(cs.namespace(|| "covariance"), &circ_covariance_sum, withness_covariance_sum as u64, witness_num_samples as u64).unwrap();
-		let (withness_covariance_sqrt, withness_covariance_frac) = get_sqrt(withness_covariance);
-		let circ_covar_sqrt = sqrt_constraint(cs.namespace(|| "sigma xy"), &circ_covariance, withness_covariance_sqrt as u64, withness_covariance_frac as u64).unwrap();
-
 		let c3 = 0;
-		//let s_numerator = 2 * (sum_src / num_samples) * (sum_dst / num_samples) + c3; 
-		//let s_denom = ((sum_src / num_samples) * (sum_src / num_samples) + (sum_dst / num_samples) * (sum_dst / num_samples)) + c1;
-		//let s = ssim_struct(cs.namespace(|| "ssim lum"), &var_mean_src, &var_mean_dst, c1 as u64, l_numerator as u64, l_denom as u64);
+		let witness_s_numerator = withness_sigma_xy + c3; 
+		let witness_s_denom = withness_sigma_x * withness_sigma_y  + c3;
+		let circ_s_numerator = ssim_struct(cs.namespace(|| "ssim struct"), &circ_sigma_xy, &circ_sigma_x, &circ_sigma_y, c3 as u64, witness_s_numerator as u64, witness_s_denom as u64);
+		//
+		// contrast
+		//
+		let c2 = 0;
+		let witness_c_numerator = 2 * withness_sigma_x * withness_sigma_y + c2; 
+		let witness_c_denom = (withness_sigma_x * withness_sigma_x) + (withness_sigma_y * withness_sigma_y) + c3;
+		let circ_c_numerator = ssim_lum(cs.namespace(|| "ssim contrast"), &circ_sigma_x, &circ_sigma_y, c3 as u64, witness_c_numerator as u64, witness_c_denom as u64);
+
 		//print!("inputs l_numerator={:?} l_denom={:?}\n", l_numerator, l_denom);
 		print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());
-		print!("withness_covariance={:?} sqrt={:?} rem={:?}",withness_covariance, withness_covariance_sqrt, withness_covariance_frac);
-		print!("cir_covariance={:?} circ_covar_sqrt={:?} ",circ_covariance.value, circ_covar_sqrt.value);
+		print!("withness_covariance={:?} sqrt={:?} rem={:?}",withness_sigma_xy_sq, withness_sigma_xy, withness_sigma_xy_frac);
+		print!("circ_sigma_sq={:?} circ_sigma={:?} ",circ_sigma_xy_sq.value, circ_sigma_xy.value);
 		
 		assert!(cs.is_satisfied());
 	}	
