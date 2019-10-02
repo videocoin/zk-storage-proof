@@ -62,12 +62,11 @@ fn merkel_path(
 
 fn main()
 {
- /*   
 	let _src_pixel: Vec<u32> = (0..256).map(|x| x).collect();
 	let _dst_pixel: Vec<u32> = (0..256).map(|x| x).collect();
 			
 	mb_ssim::ssim_circuit_proof_verify(_src_pixel, _dst_pixel);
-*/
+
 /*
 	let mut data:Vec<u64> = Vec::new();
 	for i in 0..512 {
@@ -78,11 +77,11 @@ fn main()
 	let end = 0;
 		
 */
-
+/*
 	let mut data:Vec<u64> = Vec::new();
 	for i in 0..512 {
     	data.push(i);
 	}
 	merkle_pot::create_proof(data);
-	let end = 0;
+	let end = 0;*/
 }
