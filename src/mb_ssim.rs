@@ -201,85 +201,6 @@ pub fn div_constraint<E: Engine, CS: ConstraintSystem<E>>(
 	Ok(quotient)
 }
 
-pub fn ssim_lum<E: Engine, CS: ConstraintSystem<E>>(
-	mut cs: CS,
-	src_mean: &AllocatedPixel<E>,
-	dst_mean: &AllocatedPixel<E>,
-	c1_u64: u64,
-	l_numerator_u64: u64,
-	l_denominator_u64: u64,
-) -> Result<AllocatedPixel<E>, SynthesisError>
-{
-	let c1 = AllocatedPixel::alloc(cs.namespace(|| "c1"), || {
-		let value: E::Fr = (E::Fr::from_repr((c1_u64 as u64).into())).unwrap();
-		Ok(value)
-	})?;
-	
-	let uxuy = AllocatedPixel::alloc(cs.namespace(|| "uxuy"), || {
-		let mut value: E::Fr = src_mean.get_value().unwrap();
-		let mut value2: E::Fr = dst_mean.get_value().unwrap();
-		value.mul_assign(&value2);		
-		Ok(value)
-	})?;
-	cs.enforce(	|| "enforce uxuy", 
-		|lc| { lc + src_mean.variable }, 	
-		|lc| { lc + dst_mean.variable },
-		|lc| { lc + uxuy.variable},
-	);
-		
-	let ux_square = AllocatedPixel::alloc(cs.namespace(|| "ux_square"), || {
-		let mut value: E::Fr = src_mean.get_value().unwrap();
-		let mut value2: E::Fr = src_mean.get_value().unwrap();
-		value.mul_assign(&value2);		
-		Ok(value)
-	})?;
-
-	cs.enforce(	|| "enforce ux_square", 
-		|lc| { lc + src_mean.variable }, 	
-		|lc| { lc + src_mean.variable },
-		|lc| { lc +  ux_square.variable},
-	);
-			
-	let uy_square = AllocatedPixel::alloc(cs.namespace(|| "uy_square"), || {
-		let mut value: E::Fr = dst_mean.get_value().unwrap();
-		let mut value2: E::Fr = dst_mean.get_value().unwrap();
-		value.mul_assign(&value2);
-		print!("uy_square {:?}  {:?}  {:?}\n", dst_mean.get_value().unwrap(), value2, value);
-		Ok(value)
-	})?;	
-
-	cs.enforce(	|| "enforce uy_square", 
-		|lc| { lc + dst_mean.variable }, 	
-		|lc| { lc + dst_mean.variable },
-		|lc| { lc + uy_square.variable},
-	);
-
-	let lum_numerator = AllocatedPixel::alloc(cs.namespace(|| "lum numerator"), || {
-		let value: E::Fr = (E::Fr::from_repr((l_numerator_u64 as u64).into())).unwrap();
-		Ok(value)
-	})?;	
-	cs.enforce(	|| "enforce lum numerator", 
-		|lc| { 
-			let mut coeff = E::Fr::one();
-			coeff.double();
-			print!("coeff {:?}  \n",  coeff);	
-			lc + (coeff, uxuy.variable) + c1.variable
-		}, 	
-		|lc| { lc + CS::one() },
-		|lc| { lc + lum_numerator.variable},
-	);	
-
-	let lum_denom = AllocatedPixel::alloc(cs.namespace(|| "lum denom"), || {
-		let value: E::Fr = (E::Fr::from_repr((l_denominator_u64 as u64).into())).unwrap();
-		Ok(value)
-	})?;	
-	cs.enforce(	|| "enforce lum denom", 
-		|lc| { lc + ux_square.variable + uy_square.variable + c1.variable}, 	
-		|lc| { lc + CS::one() },
-		|lc| { lc + lum_denom.variable},
-	);	
-	Ok(lum_numerator)
-}
 
 pub fn sqrt_constraint_enforce<E: Engine, A, AR, CS: ConstraintSystem<E>>(
 	mut cs: CS,
@@ -642,7 +563,92 @@ pub fn covairance_constraint<E: Engine, CS: ConstraintSystem<E>>(
 }
 
 
-pub fn ssim_struct<E: Engine, CS: ConstraintSystem<E>>(
+///
+/// Constriant for luma or contrast.
+/// Incase of contrast src_mean is interepreted as sigma_x, dst_mean as sigma_y and c1 as c2
+/// 
+pub fn ssim_lum_or_contrast<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	src_mean: &AllocatedPixel<E>,
+	dst_mean: &AllocatedPixel<E>,
+	c1_u64: u64,
+	l_numerator_u64: u64,
+	l_denominator_u64: u64,
+) -> Result<(AllocatedPixel<E>,AllocatedPixel<E>,AllocatedPixel<E>), SynthesisError>
+{
+	let c1 = AllocatedPixel::alloc(cs.namespace(|| "c1"), || {
+		let value: E::Fr = (E::Fr::from_repr((c1_u64 as u64).into())).unwrap();
+		Ok(value)
+	})?;
+	
+	let uxuy = AllocatedPixel::alloc(cs.namespace(|| "uxuy"), || {
+		let mut value: E::Fr = src_mean.get_value().unwrap();
+		let mut value2: E::Fr = dst_mean.get_value().unwrap();
+		value.mul_assign(&value2);		
+		Ok(value)
+	})?;
+	cs.enforce(	|| "enforce uxuy", 
+		|lc| { lc + src_mean.variable }, 	
+		|lc| { lc + dst_mean.variable },
+		|lc| { lc + uxuy.variable},
+	);
+		
+	let ux_square = AllocatedPixel::alloc(cs.namespace(|| "ux_square"), || {
+		let mut value: E::Fr = src_mean.get_value().unwrap();
+		let mut value2: E::Fr = src_mean.get_value().unwrap();
+		value.mul_assign(&value2);		
+		Ok(value)
+	})?;
+
+	cs.enforce(	|| "enforce ux_square", 
+		|lc| { lc + src_mean.variable }, 	
+		|lc| { lc + src_mean.variable },
+		|lc| { lc +  ux_square.variable},
+	);
+			
+	let uy_square = AllocatedPixel::alloc(cs.namespace(|| "uy_square"), || {
+		let mut value: E::Fr = dst_mean.get_value().unwrap();
+		let mut value2: E::Fr = dst_mean.get_value().unwrap();
+		value.mul_assign(&value2);
+		print!("uy_square {:?}  {:?}  {:?}\n", dst_mean.get_value().unwrap(), value2, value);
+		Ok(value)
+	})?;	
+
+	cs.enforce(	|| "enforce uy_square", 
+		|lc| { lc + dst_mean.variable }, 	
+		|lc| { lc + dst_mean.variable },
+		|lc| { lc + uy_square.variable},
+	);
+
+	let lum_numerator = AllocatedPixel::alloc(cs.namespace(|| "lum numerator"), || {
+		let value: E::Fr = (E::Fr::from_repr((l_numerator_u64 as u64).into())).unwrap();
+		Ok(value)
+	})?;	
+	cs.enforce(	|| "enforce lum numerator", 
+		|lc| { 
+			let mut coeff = E::Fr::one();
+			coeff.double();
+			print!("coeff {:?}  \n",  coeff);	
+			lc + (coeff, uxuy.variable) + c1.variable
+		}, 	
+		|lc| { lc + CS::one() },
+		|lc| { lc + lum_numerator.variable},
+	);	
+
+	let lum_denom = AllocatedPixel::alloc(cs.namespace(|| "lum denom"), || {
+		let value: E::Fr = (E::Fr::from_repr((l_denominator_u64 as u64).into())).unwrap();
+		Ok(value)
+	})?;	
+	cs.enforce(	|| "enforce lum denom", 
+		|lc| { lc + ux_square.variable + uy_square.variable + c1.variable}, 	
+		|lc| { lc + CS::one() },
+		|lc| { lc + lum_denom.variable},
+	);	
+	Ok((lum_numerator, lum_denom, c1))
+}
+
+
+pub fn ssim_struct_constraint<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
 	sigma_xy: &AllocatedPixel<E>,
 	sigma_x: &AllocatedPixel<E>,
@@ -650,7 +656,7 @@ pub fn ssim_struct<E: Engine, CS: ConstraintSystem<E>>(
 	witness_c3: u64,
 	witness_s_numerator: u64,
 	witness_s_denominator: u64,
-) -> Result<AllocatedPixel<E>, SynthesisError>//-> (AllocatedPixel<E>, AllocatedPixel<E>)
+) -> Result<(AllocatedPixel<E>, AllocatedPixel<E>), SynthesisError>//-> (AllocatedPixel<E>, AllocatedPixel<E>)
 {
 	let circ_c3 = AllocatedPixel::alloc(cs.namespace(|| "c3"), || {
 		let value: E::Fr = (E::Fr::from_repr((witness_c3 as u64).into())).unwrap();
@@ -679,7 +685,46 @@ pub fn ssim_struct<E: Engine, CS: ConstraintSystem<E>>(
 		|lc| { lc + s_denom.variable - circ_c3.variable},
 	);	
 	//(s_numerator, s_denom)
-	Ok(s_denom)
+	Ok((s_numerator,s_denom))
+}
+
+pub fn ssim_constraint<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	ssim_l_numerator: &AllocatedPixel<E>,
+	sigma_xy: &AllocatedPixel<E>,
+	circ_c2: &AllocatedPixel<E>,	
+	ssim_l_denom: &AllocatedPixel<E>,
+	ssim_c_denom: &AllocatedPixel<E>,
+	witness_s_numerator: u64,
+	witness_s_denominator: u64,
+) -> Result<(AllocatedPixel<E>, AllocatedPixel<E>), SynthesisError>//-> (AllocatedPixel<E>, AllocatedPixel<E>)
+{
+
+	let s_numerator = AllocatedPixel::alloc(cs.namespace(|| "lum numerator"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_s_numerator as u64).into())).unwrap();
+		Ok(value)
+	})?;	
+	cs.enforce(	|| "enforce lum numerator", 
+		|lc| { lc +  ssim_l_numerator.variable }, 	
+		|lc| { 
+			let mut coeff = E::Fr::one();
+			coeff.double();
+			lc + (coeff,  sigma_xy.variable) + circ_c2.variable
+		},
+		|lc| { lc + s_numerator.variable},
+	);	
+
+	let s_denom = AllocatedPixel::alloc(cs.namespace(|| "s denom"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_s_denominator as u64).into())).unwrap();
+		Ok(value)
+	})?;	
+	cs.enforce(	|| "enforce lum denom", 
+		|lc| { lc + ssim_l_denom.variable}, 	
+		|lc| { lc + ssim_c_denom.variable },
+		|lc| { lc + s_denom.variable},
+	);	
+	//(s_numerator, s_denom)
+	Ok((s_numerator,s_denom))
 }
 
 pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
@@ -827,7 +872,7 @@ mod test {
 		let c1 = 0;
 		let witness_l_numerator = 2 * (witness_sum_src / witness_num_samples) * (witness_sum_dst / witness_num_samples) + c1; 
 		let witness_l_denom = ((witness_sum_src / witness_num_samples) * (witness_sum_src / witness_num_samples) + (witness_sum_dst / witness_num_samples) * (witness_sum_dst / witness_num_samples)) + c1;
-		let circ_l = ssim_lum(cs.namespace(|| "ssim lum"), &circ_mean_src, &circ_mean_dst, c1 as u64, witness_l_numerator as u64, witness_l_denom as u64);
+		let (circ_l_numerator, circ_l_denom, c1_crc) = ssim_lum_or_contrast(cs.namespace(|| "ssim lum"), &circ_mean_src, &circ_mean_dst, c1 as u64, witness_l_numerator as u64, witness_l_denom as u64).unwrap();
 		
 		//
 		// Structure
@@ -853,14 +898,20 @@ mod test {
 		let c3 = 0;
 		let witness_s_numerator = withness_sigma_xy + c3; 
 		let witness_s_denom = withness_sigma_x * withness_sigma_y  + c3;
-		let circ_s_numerator = ssim_struct(cs.namespace(|| "ssim struct"), &circ_sigma_xy, &circ_sigma_x, &circ_sigma_y, c3 as u64, witness_s_numerator as u64, witness_s_denom as u64);
+		let (circ_s_numerator, circ_s_denom) = ssim_struct_constraint(cs.namespace(|| "ssim struct"), &circ_sigma_xy, &circ_sigma_x, &circ_sigma_y, c3 as u64, witness_s_numerator as u64, witness_s_denom as u64).unwrap();
 		//
 		// contrast
 		//
 		let c2 = 0;
 		let witness_c_numerator = 2 * withness_sigma_x * withness_sigma_y + c2; 
 		let witness_c_denom = (withness_sigma_x * withness_sigma_x) + (withness_sigma_y * withness_sigma_y) + c3;
-		let circ_c_numerator = ssim_lum(cs.namespace(|| "ssim contrast"), &circ_sigma_x, &circ_sigma_y, c3 as u64, witness_c_numerator as u64, witness_c_denom as u64);
+		let (circ_c_numerator, circ_c_denom, c2_circ) = ssim_lum_or_contrast(cs.namespace(|| "ssim contrast"), &circ_sigma_x, &circ_sigma_y, c3 as u64, witness_c_numerator as u64, witness_c_denom as u64).unwrap();
+		//
+		// ssim
+		//
+		let witness_ssim_numerator = witness_l_numerator * 2 * withness_sigma_xy + c2;
+		let witness_ssim_denom = witness_l_denom * witness_c_denom;
+		let (circ_ssim_numerator, circ_ssim_denom) = ssim_constraint(cs.namespace(|| "ssim constraint"), &circ_l_numerator, &circ_sigma_xy, &c2_circ, &circ_l_denom, &circ_c_denom, witness_ssim_numerator as u64, witness_ssim_denom as u64).unwrap();
 
 		//print!("inputs l_numerator={:?} l_denom={:?}\n", l_numerator, l_denom);
 		print!("Num inputs: {:?}\n", cs.num_inputs());
