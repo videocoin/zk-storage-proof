@@ -658,6 +658,53 @@ pub fn ssim_constraint<E: Engine, CS: ConstraintSystem<E>>(
 	Ok((s_numerator,s_denom))
 }
 
+pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	mut witns: &Witness,
+	src_mb: Vec<u32>,
+	dst_mb: Vec<u32>,
+) -> Result<(AllocatedPixel<E>, AllocatedPixel<E>), SynthesisError> {
+	let circ_mb_x = gen_sample(cs.namespace(|| "src mb"), src_mb.clone());
+	let circ_mb_y = gen_sample(cs.namespace(|| "dst mb"), dst_mb.clone());
+	let circ_mb_sum_x = sum_vec(cs.namespace(|| "src sum mb"), &circ_mb_x).unwrap();
+	let circ_mb_sum_y = sum_vec(cs.namespace(|| "dst sum mb"), &circ_mb_y).unwrap();
+	
+	let circ_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &circ_mb_sum_x, witns.sum_src as u64, witns.num_samples as u64).unwrap();
+	let circ_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &circ_mb_sum_y, witns.sum_dst as u64, witns.num_samples as u64).unwrap();
+	
+	
+	let (circ_l_numerator, circ_l_denom, c1_crc) = ssim_lum_or_contrast(cs.namespace(|| "ssim lum"), &circ_mean_src, &circ_mean_dst, witns.c1 as u64, witns.l_numerator as u64, witns.l_denom as u64).unwrap();
+	
+	//
+	// Structure
+	//
+	let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &src_mb, witns.sum_src / witns.num_samples);
+	let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &dst_mb, witns.sum_dst / witns.num_samples);
+	
+	let mut circ_diff_vec_src = absdiff_vec(cs.namespace(|| "absdiff a"), &circ_mb_x, &circ_mean_src, &circ_src_sign);
+	let mut circ_diff_vec_dst = absdiff_vec(cs.namespace(|| "abs diff b"),  &circ_mb_y, &circ_mean_dst, &circ_dst_sign);
+
+	let (circ_sigma_x_sq_sum, circ_sigma_x_sq, circ_sigma_x) = covairance_constraint(cs.namespace(|| "sigma x const"), 
+			&circ_diff_vec_src, &circ_diff_vec_src, witns.sigma_x_sq_sum, witns.sigma_x, witns.sigma_x_frac);
+
+	let (circ_sigma_y_sq_sum, circ_sigma_y_sq, circ_sigma_y) = covairance_constraint(cs.namespace(|| "sigma y const"), 
+			&circ_diff_vec_dst, &circ_diff_vec_dst, witns.sigma_y_sq_sum, witns.sigma_y, witns.sigma_y_frac);
+
+	let (circ_sigma_xy_sq_sum, circ_sigma_xy_sq, circ_sigma_xy) = covairance_constraint(cs.namespace(|| "sigma xy const"), 
+			&circ_diff_vec_src, &circ_diff_vec_dst, witns.sigma_xy_sq_sum, witns.sigma_xy, witns.sigma_xy_frac);
+	
+	let (circ_s_numerator, circ_s_denom) = ssim_struct_constraint(cs.namespace(|| "ssim struct"), &circ_sigma_xy, &circ_sigma_x, &circ_sigma_y, witns.c3 as u64, witns.s_numerator as u64, witns.s_denom as u64).unwrap();
+	//
+	// contrast
+	//
+	let (circ_c_numerator, circ_c_denom, c2_circ) = ssim_lum_or_contrast(cs.namespace(|| "ssim contrast"), &circ_sigma_x, &circ_sigma_y, witns.c2 as u64, witns.c_numerator as u64, witns.c_denom as u64).unwrap();
+	//
+	// ssim
+	//
+	let (circ_ssim_numerator, circ_ssim_denom) = ssim_constraint(cs.namespace(|| "ssim constraint"), &circ_l_numerator, &circ_sigma_xy, &c2_circ, &circ_l_denom, &circ_c_denom, witns.ssim_numerator as u64, witns.ssim_denom as u64).unwrap();
+	Ok((circ_ssim_numerator, circ_ssim_denom))
+}
+
 pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
 	use bellperson::groth16::{
 		create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof, Proof,
@@ -779,12 +826,13 @@ pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
 	}
 
 #[derive(Default)]
-struct Witness {
+pub struct Witness {
 	num_samples: u32,
 	sum_src: u32,
 	sum_dst: u32,
 	l_numerator: u32,
 	l_denom: u32,
+	c1: u32,
 	
 	sigma_x_sq_sum: u32, 
 	sigma_x_sq: u32, 
@@ -800,12 +848,13 @@ struct Witness {
 	sigma_xy_sq: u32, 
 	sigma_xy: u32, 
 	sigma_xy_frac: u32,
-	
+
 	s_numerator: u32,
 	s_denom: u32,
-	
+	c3: u32,
 	c_numerator: u32,
 	c_denom: u32,
+	c2: u32,
 	
 	ssim_numerator: u32,
 	ssim_denom: u32
@@ -853,6 +902,7 @@ mod test {
 			sum_dst,
 			l_numerator,
 			l_denom,
+			c1,
 			
 			sigma_x_sq_sum, 
 			sigma_x_sq, 
@@ -868,61 +918,26 @@ mod test {
 			sigma_xy_sq, 
 			sigma_xy, 
 			sigma_xy_frac,
+	
 			
 			s_numerator,
 			s_denom,
+			c3,
 			
 			c_numerator,
 			c_denom,
+			c2,
 			
 			ssim_numerator,
 			ssim_denom,
 		};
 		
-		let circ_mb_x = gen_sample(cs.namespace(|| "src mb"), src_mb.clone());
-		let circ_mb_y = gen_sample(cs.namespace(|| "dst mb"), dst_mb.clone());
-		let circ_mb_sum_x = sum_vec(cs.namespace(|| "src sum mb"), &circ_mb_x).unwrap();
-		let circ_mb_sum_y = sum_vec(cs.namespace(|| "dst sum mb"), &circ_mb_y).unwrap();
-		
-		let circ_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &circ_mb_sum_x, witns.sum_src as u64, witns.num_samples as u64).unwrap();
-		let circ_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &circ_mb_sum_y, witns.sum_dst as u64, witns.num_samples as u64).unwrap();
-		
-		
-		let (circ_l_numerator, circ_l_denom, c1_crc) = ssim_lum_or_contrast(cs.namespace(|| "ssim lum"), &circ_mean_src, &circ_mean_dst, c1 as u64, witns.l_numerator as u64, witns.l_denom as u64).unwrap();
-		
-		//
-		// Structure
-		//
-		let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &src_mb, witns.sum_src / witns.num_samples);
-		let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &dst_mb, witns.sum_dst / witns.num_samples);
-		
-		let mut circ_diff_vec_src = absdiff_vec(cs.namespace(|| "absdiff a"), &circ_mb_x, &circ_mean_src, &circ_src_sign);
-		let mut circ_diff_vec_dst = absdiff_vec(cs.namespace(|| "abs diff b"),  &circ_mb_y, &circ_mean_dst, &circ_dst_sign);
-	
-		let (circ_sigma_x_sq_sum, circ_sigma_x_sq, circ_sigma_x) = covairance_constraint(cs.namespace(|| "sigma x const"), 
-				&circ_diff_vec_src, &circ_diff_vec_src, witns.sigma_x_sq_sum, witns.sigma_x, witns.sigma_x_frac);
-
-		let (circ_sigma_y_sq_sum, circ_sigma_y_sq, circ_sigma_y) = covairance_constraint(cs.namespace(|| "sigma y const"), 
-				&circ_diff_vec_dst, &circ_diff_vec_dst, witns.sigma_y_sq_sum, witns.sigma_y, witns.sigma_y_frac);
-
-		let (circ_sigma_xy_sq_sum, circ_sigma_xy_sq, circ_sigma_xy) = covairance_constraint(cs.namespace(|| "sigma xy const"), 
-				&circ_diff_vec_src, &circ_diff_vec_dst, witns.sigma_xy_sq_sum, witns.sigma_xy, witns.sigma_xy_frac);
-		
-		let (circ_s_numerator, circ_s_denom) = ssim_struct_constraint(cs.namespace(|| "ssim struct"), &circ_sigma_xy, &circ_sigma_x, &circ_sigma_y, c3 as u64, witns.s_numerator as u64, witns.s_denom as u64).unwrap();
-		//
-		// contrast
-		//
-		let (circ_c_numerator, circ_c_denom, c2_circ) = ssim_lum_or_contrast(cs.namespace(|| "ssim contrast"), &circ_sigma_x, &circ_sigma_y, c3 as u64, witns.c_numerator as u64, witns.c_denom as u64).unwrap();
-		//
-		// ssim
-		//
-		let (circ_ssim_numerator, circ_ssim_denom) = ssim_constraint(cs.namespace(|| "ssim constraint"), &circ_l_numerator, &circ_sigma_xy, &c2_circ, &circ_l_denom, &circ_c_denom, witns.ssim_numerator as u64, witns.ssim_denom as u64).unwrap();
-
+		let (circ_ssim_numerator, circ_ssim_denom) = ssim_circuit(cs.namespace(|| "ssim"), &witns, src_mb, dst_mb).unwrap();
 		//print!("inputs l_numerator={:?} l_denom={:?}\n", l_numerator, l_denom);
-		print!("Num inputs: {:?}\n", cs.num_inputs());
+		//print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());
 		print!("witns.covariance={:?} sqrt={:?} rem={:?}",witns.sigma_xy_sq, witns.sigma_xy, witns.sigma_xy_frac);
-		print!("circ_sigma_sq={:?} circ_sigma={:?} ",circ_sigma_xy_sq.value, circ_sigma_xy.value);
+		//print!("circ_sigma_sq={:?} circ_sigma={:?} ",circ_sigma_xy_sq.value, circ_sigma_xy.value);
 
 		assert!(cs.is_satisfied());
 	}	
