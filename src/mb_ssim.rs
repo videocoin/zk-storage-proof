@@ -25,6 +25,7 @@ use self::bellperson::groth16::{
 pub struct Ssim<E: Engine> {
 	pub srcPixels: Vec<Option<E::Fr>>,
 	pub dstPixels: Vec<Option<E::Fr>>,
+	pub witns: Witness,
 }
 
 impl<E: Engine> Circuit<E> for Ssim<E> {
@@ -705,7 +706,10 @@ pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	Ok((circ_ssim_numerator, circ_ssim_denom))
 }
 
-pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
+pub fn ssim_circuit_proof_verify(
+	_src_pixel: Vec<u32>, 
+	_dst_pixel: Vec<u32>,
+	_witns: Witness,) {
 	use bellperson::groth16::{
 		create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof, Proof,
 	};
@@ -727,6 +731,7 @@ pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
 	let c = Ssim::<Bls12> {
 		srcPixels: tmp_src_pixels.clone(),
 		dstPixels: tmp_dst_pixels.clone(),
+		witns: _witns.clone(),
 	};
 
 	// Create parameters for our circuit
@@ -734,6 +739,7 @@ pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
 		let c = Ssim::<Bls12> {
 			srcPixels: tmp_src_pixels.clone(),
 			dstPixels: tmp_dst_pixels.clone(),
+			witns: _witns.clone(),
 		};
 
 		generate_random_parameters(c, rng).unwrap()
@@ -824,7 +830,8 @@ pub fn ssim_circuit_proof_verify(_src_pixel: Vec<u32>, _dst_pixel: Vec<u32>) {
 		}
 		var_sign
 	}
-
+	
+#[derive(Clone)]
 #[derive(Default)]
 pub struct Witness {
 	num_samples: u32,
