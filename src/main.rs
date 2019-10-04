@@ -19,6 +19,7 @@ extern crate bellperson;
 extern crate paired;
 extern crate pbr;
 extern crate rand;
+use rand::{Rng, SeedableRng, XorShiftRng};
 use ff::{Field, PrimeField, PrimeFieldDecodingError, PrimeFieldRepr};
 
 //mod macroblock;
@@ -62,10 +63,16 @@ fn merkel_path(
 
 fn main()
 {
-	let _src_pixel: Vec<u32> = (0..256).map(|x| x).collect();
-	let _dst_pixel: Vec<u32> = (0..256).map(|x| x).collect();
-	let _witns: mb_ssim::Witness = Default::default();		
-	mb_ssim::ssim_circuit_proof_verify(_src_pixel, _dst_pixel, _witns);
+	//let src_mb: Vec<u32> = (0..256).map(|x| x).collect();
+	//let dst_mb: Vec<u32> = (0..256).map(|x| x).collect();
+	let mb_size = 256;
+	let mut rng = rand::thread_rng();
+	let src_mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
+	let dst_mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
+		
+	//let _witns: mb_ssim::Witness = Default::default();		
+	let witns = mb_ssim::gen_witness(&src_mb.clone(), &dst_mb.clone());
+	mb_ssim::ssim_circuit_proof_verify(src_mb, dst_mb, witns);
 
 /*
 	let mut data:Vec<u64> = Vec::new();

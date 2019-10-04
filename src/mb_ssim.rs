@@ -7,6 +7,7 @@ extern crate rand;
 use bellperson::{Circuit, ConstraintSystem, SynthesisError};
 use paired::bls12_381::{Bls12, Fr, FrRepr};
 use paired::Engine;
+use std::marker::PhantomData;
 
 use super::pixel::*;
 use ff::{BitIterator, Field, PrimeField, PrimeFieldRepr};
@@ -23,15 +24,16 @@ use self::bellperson::groth16::{
 
 #[derive(Clone)]
 pub struct Ssim<E: Engine> {
-	pub srcPixels: Vec<Option<E::Fr>>,
-	pub dstPixels: Vec<Option<E::Fr>>,
+	src_mb: Vec<u32>, 
+	dst_mb: Vec<u32>,	
 	pub witns: Witness,
+	phantom: PhantomData<E>,	
 }
 
 impl<E: Engine> Circuit<E> for Ssim<E> {
 
 	fn synthesize<CS: ConstraintSystem<E>>(self, cs: &mut CS) -> Result<(), SynthesisError> {
-
+		let (circ_ssim_numerator, circ_ssim_denom) = ssim_circuit(cs.namespace(|| "ssim"), self).unwrap();
 		Ok(())
 	}
 	
@@ -462,7 +464,7 @@ pub fn variance<E: Engine, CS: ConstraintSystem<E>>(
 		let abs_diff_b = &diff_vec_b[i];//absdiff(cs.namespace(|| format!("diff b {}", i)), &b[i], &mean_b, sign_b[i].clone()).unwrap();
 		//let value_num = abs_diff_a.mul(cs.namespace(|| format!("diff ab {}", i)), &abs_diff_b).unwrap();
 		let value_num = mul(cs.namespace(|| format!("diff ab {}", i)), &abs_diff_a, &abs_diff_b).unwrap();
-		print!("variance elem pass1 = {:?}\n", value_num.get_value().unwrap());
+		//print!("variance elem pass1 = {:?}\n", value_num.get_value().unwrap());
 		diff_prod_vec.push(value_num);
 	}
 
@@ -661,12 +663,11 @@ pub fn ssim_constraint<E: Engine, CS: ConstraintSystem<E>>(
 
 pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
-	mut witns: &Witness,
-	src_mb: Vec<u32>,
-	dst_mb: Vec<u32>,
+	c: Ssim::<E>,
 ) -> Result<(AllocatedPixel<E>, AllocatedPixel<E>), SynthesisError> {
-	let circ_mb_x = gen_sample(cs.namespace(|| "src mb"), src_mb.clone());
-	let circ_mb_y = gen_sample(cs.namespace(|| "dst mb"), dst_mb.clone());
+	let mut witns = c.witns;
+	let circ_mb_x = gen_sample(cs.namespace(|| "src mb"), c.src_mb.clone());
+	let circ_mb_y = gen_sample(cs.namespace(|| "dst mb"), c.dst_mb.clone());
 	let circ_mb_sum_x = sum_vec(cs.namespace(|| "src sum mb"), &circ_mb_x).unwrap();
 	let circ_mb_sum_y = sum_vec(cs.namespace(|| "dst sum mb"), &circ_mb_y).unwrap();
 	
@@ -679,8 +680,8 @@ pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	//
 	// Structure
 	//
-	let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &src_mb, witns.sum_src / witns.num_samples);
-	let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &dst_mb, witns.sum_dst / witns.num_samples);
+	let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &c.src_mb, witns.sum_src / witns.num_samples);
+	let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &c.dst_mb, witns.sum_dst / witns.num_samples);
 	
 	let mut circ_diff_vec_src = absdiff_vec(cs.namespace(|| "absdiff a"), &circ_mb_x, &circ_mean_src, &circ_src_sign);
 	let mut circ_diff_vec_dst = absdiff_vec(cs.namespace(|| "abs diff b"),  &circ_mb_y, &circ_mean_dst, &circ_dst_sign);
@@ -718,28 +719,21 @@ pub fn ssim_circuit_proof_verify(
 
 	let rng = &mut thread_rng();
 	// Create an instance of circuit
-
-	let tmp_src_pixels: Vec<Option<Fr>> = _src_pixel
-		.iter()
-		.map(|x| Some((Fr::from_repr(FrRepr::from(*x as u64))).unwrap()))
-		.collect();
-	let tmp_dst_pixels: Vec<Option<Fr>> = _dst_pixel
-		.iter()
-		.map(|x| Some((Fr::from_repr(FrRepr::from(*x as u64))).unwrap()))
-		.collect();
-
+	
 	let c = Ssim::<Bls12> {
-		srcPixels: tmp_src_pixels.clone(),
-		dstPixels: tmp_dst_pixels.clone(),
+		src_mb: _src_pixel.clone(),
+		dst_mb: _dst_pixel.clone(),		
 		witns: _witns.clone(),
+		phantom: Default::default(),
 	};
 
 	// Create parameters for our circuit
 	let params = {
 		let c = Ssim::<Bls12> {
-			srcPixels: tmp_src_pixels.clone(),
-			dstPixels: tmp_dst_pixels.clone(),
+			src_mb: _src_pixel.clone(),
+			dst_mb: _dst_pixel.clone(),
 			witns: _witns.clone(),
+			phantom: Default::default(),
 		};
 
 		generate_random_parameters(c, rng).unwrap()
@@ -752,85 +746,86 @@ pub fn ssim_circuit_proof_verify(
 
 	// Create a groth16 proof with our parameters.
 	let proof = create_random_proof(c, &params, rng).unwrap();
-	let expected_inputs: Vec<Fr> = tmp_src_pixels.into_iter().map(|n| n.unwrap()).collect();
-	assert!(verify_proof(&pvk, &proof, &expected_inputs[..]).unwrap());
+	//let expected_inputs: Vec<Fr> = tmp_src_pixels.into_iter().map(|n| n.unwrap()).collect();
+	//assert!(verify_proof(&pvk, &proof, &expected_inputs[..]).unwrap());
+	let end = 0;
 }
 
 
 
 
 
-	///
-	/// Utility functions
-	///
-	
-	/// generate random input macroblock
-	fn gen_mb(mb_size: usize ) -> Vec<u32>  {	
-		let mut rng = rand::thread_rng();
-		let mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
-		mb
-	}
+///
+/// Utility functions
+///
 
-	fn get_mb_sum(mb: &Vec<u32> ) -> u32  {	
-		let sum = mb.iter().map(|x| x).sum();
-		sum
-	}
-	
-	fn get_sqrt(x: u32 ) -> (u32, u32)  {	
-		let sqrt_x = (x as f64).sqrt() as u32;
-		(sqrt_x, x - sqrt_x * sqrt_x)
-	}
+/// generate random input macroblock
+fn gen_mb(mb_size: usize ) -> Vec<u32>  {	
+	let mut rng = rand::thread_rng();
+	let mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
+	mb
+}
 
-	fn get_mb_covariance(mb_src: &Vec<u32>, mb_dst: &Vec<u32>, mean_src: u32, mean_dst: u32 ) -> u32 {
-		let mut covar: u32 = 0;
-		for it in mb_src.iter().zip(mb_dst.iter()) {
-			let (src, dst) = it;
-			let  mut a_diff: u32  = 0;
-			let  mut b_diff: u32  = 0;
-			if *src > mean_src {a_diff = *src  - mean_src} else {a_diff = mean_src - *src};
-			if *dst > mean_dst {b_diff = *dst  - mean_dst} else {b_diff = mean_dst - *dst};
-    		covar = covar + a_diff  * b_diff;
-		}
-		covar
-	}
-	
-	fn get_witness(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> (u32, u32, u32, u32) {
-		
-		let sum_src = get_mb_sum(src_mb);
-		let sum_dst = get_mb_sum(dst_mb);
-		let num_samples: u32 = src_mb.len() as u32;
-		let sigma_sq_sum = get_mb_covariance(&src_mb, &dst_mb, sum_src / num_samples, sum_dst/ num_samples);
-		let sigma_sq = sigma_sq_sum / num_samples;		
-		let (sigma, sigma_frac) = get_sqrt(sigma_sq);
-		(sigma_sq_sum, sigma_sq, sigma, sigma_frac)
-	}
-	
-	fn gen_sample<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: Vec<u32> ) -> Vec<AllocatedPixel<E>>  {
-		// Prepare 3x3 test vector
+fn get_mb_sum(mb: &Vec<u32> ) -> u32  {	
+	let sum = mb.iter().map(|x| x).sum();
+	sum
+}
 
-		let mut var_pix3x3: Vec<AllocatedPixel<E>> = Vec::new();
-		for i in 0..mb.len() {
-			let value_num = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", i)), || {
-				let value = (E::Fr::from_repr((mb[i] as u64).into())).unwrap();
-				Ok(value)
-			});
-			var_pix3x3.push(value_num.unwrap());
-		}
-		var_pix3x3
-	}
+fn get_sqrt(x: u32 ) -> (u32, u32)  {	
+	let sqrt_x = (x as f64).sqrt() as u32;
+	(sqrt_x, x - sqrt_x * sqrt_x)
+}
 
-	fn gen_sample_sign<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: &Vec<u32>, mean: u32 ) -> Vec<boolean::AllocatedBit>  {
-		let mut var_sign: Vec<boolean::AllocatedBit> = Vec::new();
-		for i in 0..mb.len() {
-			let cur_sign = boolean::AllocatedBit::alloc(
-                cs.namespace(|| format!("sign {}", i)),
-                if mb[i] > mean {Some(false)} else {Some(true)},
-            );
-			var_sign.push(cur_sign.unwrap());
-		}
-		var_sign
+fn get_mb_covariance(mb_src: &Vec<u32>, mb_dst: &Vec<u32>, mean_src: u32, mean_dst: u32 ) -> u32 {
+	let mut covar: u32 = 0;
+	for it in mb_src.iter().zip(mb_dst.iter()) {
+		let (src, dst) = it;
+		let  mut a_diff: u32  = 0;
+		let  mut b_diff: u32  = 0;
+		if *src > mean_src {a_diff = *src  - mean_src} else {a_diff = mean_src - *src};
+		if *dst > mean_dst {b_diff = *dst  - mean_dst} else {b_diff = mean_dst - *dst};
+		covar = covar + a_diff  * b_diff;
 	}
+	covar
+}
+
+fn get_witness(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> (u32, u32, u32, u32) {
 	
+	let sum_src = get_mb_sum(src_mb);
+	let sum_dst = get_mb_sum(dst_mb);
+	let num_samples: u32 = src_mb.len() as u32;
+	let sigma_sq_sum = get_mb_covariance(&src_mb, &dst_mb, sum_src / num_samples, sum_dst/ num_samples);
+	let sigma_sq = sigma_sq_sum / num_samples;		
+	let (sigma, sigma_frac) = get_sqrt(sigma_sq);
+	(sigma_sq_sum, sigma_sq, sigma, sigma_frac)
+}
+
+fn gen_sample<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: Vec<u32> ) -> Vec<AllocatedPixel<E>>  {
+	// Prepare 3x3 test vector
+
+	let mut var_pix3x3: Vec<AllocatedPixel<E>> = Vec::new();
+	for i in 0..mb.len() {
+		let value_num = AllocatedPixel::alloc(cs.namespace(|| format!("val {}", i)), || {
+			let value = (E::Fr::from_repr((mb[i] as u64).into())).unwrap();
+			Ok(value)
+		});
+		var_pix3x3.push(value_num.unwrap());
+	}
+	var_pix3x3
+}
+
+fn gen_sample_sign<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: &Vec<u32>, mean: u32 ) -> Vec<boolean::AllocatedBit>  {
+	let mut var_sign: Vec<boolean::AllocatedBit> = Vec::new();
+	for i in 0..mb.len() {
+		let cur_sign = boolean::AllocatedBit::alloc(
+            cs.namespace(|| format!("sign {}", i)),
+            if mb[i] > mean {Some(false)} else {Some(true)},
+        );
+		var_sign.push(cur_sign.unwrap());
+	}
+	var_sign
+}
+
 #[derive(Clone)]
 #[derive(Default)]
 pub struct Witness {
@@ -866,21 +861,10 @@ pub struct Witness {
 	ssim_numerator: u32,
 	ssim_denom: u32
 }	
+
+
+pub fn gen_witness(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> Witness {
 	
-#[cfg(test)]
-mod test {
-	use super::*;
-	use storage_proofs::circuit::test::*;
-
-
-	#[test]
-	fn test_struct_ssim() {
-		let mut cs = TestConstraintSystem::<Bls12>::new();
-		let src_mb = gen_mb(256);
-		let dst_mb = gen_mb(256);		
-		
-		
-		
 		let num_samples = src_mb.len() as u32;
 		let sum_src = get_mb_sum(&src_mb);
 		let sum_dst = get_mb_sum(&dst_mb);
@@ -939,7 +923,39 @@ mod test {
 			ssim_denom,
 		};
 		
-		let (circ_ssim_numerator, circ_ssim_denom) = ssim_circuit(cs.namespace(|| "ssim"), &witns, src_mb, dst_mb).unwrap();
+		witns
+}
+	
+#[cfg(test)]
+mod test {
+	use super::*;
+	use storage_proofs::circuit::test::*;
+
+
+	#[test]
+	fn test_struct_ssim() {
+		let mut cs = TestConstraintSystem::<Bls12>::new();
+		let src_mb = gen_mb(256);
+		let dst_mb = gen_mb(256);		
+		
+		let witns = gen_witness(&src_mb, &dst_mb);
+		let tmp_src_pixels: Vec<Option<Fr>> = src_mb
+			.iter()
+			.map(|x| Some((Fr::from_repr(FrRepr::from(*x as u64))).unwrap()))
+			.collect();
+		let tmp_dst_pixels: Vec<Option<Fr>> = dst_mb
+			.iter()
+			.map(|x| Some((Fr::from_repr(FrRepr::from(*x as u64))).unwrap()))
+			.collect();
+	
+		let c = Ssim::<Bls12> {
+			src_mb: src_mb.clone(),
+			dst_mb: dst_mb.clone(),			
+			witns: witns.clone(),
+			phantom: Default::default(),
+		};
+			
+		let (circ_ssim_numerator, circ_ssim_denom) = ssim_circuit(cs.namespace(|| "ssim"), c).unwrap();
 		//print!("inputs l_numerator={:?} l_denom={:?}\n", l_numerator, l_denom);
 		//print!("Num inputs: {:?}\n", cs.num_inputs());
 		print!("Num constraints: {:?}\n", cs.num_constraints());
