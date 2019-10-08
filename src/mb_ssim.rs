@@ -13,13 +13,13 @@ use super::pixel::*;
 use ff::{BitIterator, Field, PrimeField, PrimeFieldRepr};
 use fil_sapling_crypto::circuit::{boolean, multipack, num, pedersen_hash};
 
-use rand::{Rng, SeedableRng, XorShiftRng};
+use rand::{Rng, SeedableRng, XorShiftRng, thread_rng};
 use std::sync::{Arc, RwLock};
 use storage_proofs::fr32::fr_into_bytes;
 
 // We're going to use the Groth16 proving system.
 use self::bellperson::groth16::{
-	create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof, Proof,
+	create_random_proof, generate_random_parameters, prepare_verifying_key, verify_proof, Proof, Parameters, PreparedVerifyingKey
 };
 
 #[derive(Clone)]
@@ -707,6 +707,18 @@ pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	Ok((circ_ssim_numerator, circ_ssim_denom))
 }
 
+/// Generate a unique cache path, based on the inputs.
+fn get_cache_path(
+    name: &str,
+    version: usize,
+) -> String {
+    format!(
+        "/tmp/videocoin-ssim-proofs-cache-{}-{}",
+        name.to_ascii_lowercase(),
+        version,
+    )
+}
+
 pub fn ssim_circuit_proof_verify(
 	_src_pixel: Vec<u32>, 
 	_dst_pixel: Vec<u32>,
@@ -824,6 +836,112 @@ fn gen_sample_sign<E: Engine, CS: ConstraintSystem<E>>(mut cs: CS, mb: &Vec<u32>
 		var_sign.push(cur_sign.unwrap());
 	}
 	var_sign
+}
+
+/// Wrapper for SSIM API
+pub struct SsimApp {
+    mb_size: u32,
+	src_pixel: Vec<u32>, 
+    dst_pixel: Vec<u32>,
+	witns: Witness,
+}
+
+impl Default for SsimApp {
+    fn default() -> Self {
+		let rng = &mut thread_rng();
+		let mb_size = 256;
+		let src_pixel: Vec<u32>  = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
+		let dst_pixel: Vec<u32> =(0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
+		let witns = gen_witness(&src_pixel.clone(), &dst_pixel.clone());
+        SsimApp {
+			mb_size,
+            src_pixel,
+            dst_pixel, 
+			witns
+        }
+    }
+}
+
+/// A trait that makes it easy to implement SSIM API
+pub trait SsimApi<'a, C: Circuit<Bls12>>: Default {
+	/// The name of the application. Used for identifying caches.
+    fn name() -> String;
+
+    /// Generate groth parameters.
+	/// arguments _src_pixel etc are random
+    fn setup(
+        &mut self,
+    ) -> Parameters<Bls12>;
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_proof(
+        &mut self,
+        groth_params: &Parameters<Bls12>,
+		src_pixel: Vec<u32>, 
+	    dst_pixel: Vec<u32>,
+		witns: Witness,		
+    ) -> Proof<Bls12>;
+
+    /// Verify the given proof, return `None` if not implemented.
+    fn verify_proof(
+		&mut self, 
+        pvk: &PreparedVerifyingKey<Bls12>,		
+		proof: &Proof<Bls12>,
+		public_inputs: Vec<u32>) -> Option<bool>;
+}
+
+impl<'a> SsimApi<'a, Ssim<Bls12>> for SsimApp {
+    fn name() -> String {
+        "Ssim".to_string()
+    }
+
+    fn setup(
+        &mut self,
+    ) -> Parameters<Bls12> {
+		// Create parameters for our circuit
+		let rng = &mut thread_rng();
+		let params = {
+			let c = Ssim::<Bls12> {
+				src_mb: self.src_pixel.clone(),
+				dst_mb: self.dst_pixel.clone(),
+				witns:  self.witns.clone(),
+				phantom: Default::default(),
+			};
+	
+			generate_random_parameters(c, rng).unwrap()
+		};
+		params
+    }
+
+    fn create_proof(
+        &mut self,
+		groth_params: &Parameters<Bls12>,
+		src_pixel: Vec<u32>, 
+	    dst_pixel: Vec<u32>,
+		witns: Witness,		
+    ) -> Proof<Bls12> {
+		let rng = &mut thread_rng();
+		let c = Ssim::<Bls12> {
+			src_mb: src_pixel.clone(),
+			dst_mb: dst_pixel.clone(),
+			witns:  witns.clone(),
+			phantom: Default::default(),
+		};
+
+        create_random_proof(c, groth_params, rng).expect("failed to create proof")
+
+    }
+
+    fn verify_proof(
+        &mut self,
+        pvk: &PreparedVerifyingKey<Bls12>,
+        proof: &Proof<Bls12>,
+		public_inputs: Vec<u32>,
+    ) -> Option<bool> {
+        let expected_inputs: Vec<Fr> = public_inputs.iter().map(|x| (Fr::from_repr((*x as u64).into())).unwrap()).collect();
+        // -- verify proof with public inputs
+        Some(verify_proof(pvk, proof, &expected_inputs).expect("failed to verify proof"))
+    }
 }
 
 #[derive(Clone)]
