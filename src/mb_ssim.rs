@@ -629,15 +629,18 @@ pub fn ssim_constraint<E: Engine, CS: ConstraintSystem<E>>(
 	circ_c2: &AllocatedPixel<E>,	
 	ssim_l_denom: &AllocatedPixel<E>,
 	ssim_c_denom: &AllocatedPixel<E>,
-	witness_s_numerator: u64,
-	witness_s_denominator: u64,
+	witness_ssim_numerator: u64,
+	witness_ssim_denominator: u64,
 ) -> Result<(AllocatedPixel<E>, AllocatedPixel<E>), SynthesisError>//-> (AllocatedPixel<E>, AllocatedPixel<E>)
 {
 
-	let s_numerator = AllocatedPixel::alloc(cs.namespace(|| "lum numerator"), || {
-		let value: E::Fr = (E::Fr::from_repr((witness_s_numerator as u64).into())).unwrap();
+	let ssim_numerator = AllocatedPixel::alloc(cs.namespace(|| "ssim numerator"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_ssim_numerator as u64).into())).unwrap();
 		Ok(value)
-	})?;	
+	})?;
+	
+	ssim_numerator.inputize(cs.namespace(|| "ssim num"))?;
+	
 	cs.enforce(	|| "enforce lum numerator", 
 		|lc| { lc +  ssim_l_numerator.variable }, 	
 		|lc| { 
@@ -645,20 +648,22 @@ pub fn ssim_constraint<E: Engine, CS: ConstraintSystem<E>>(
 			coeff.double();
 			lc + (coeff,  sigma_xy.variable) + circ_c2.variable
 		},
-		|lc| { lc + s_numerator.variable},
+		|lc| { lc + ssim_numerator.variable},
 	);	
 
-	let s_denom = AllocatedPixel::alloc(cs.namespace(|| "s denom"), || {
-		let value: E::Fr = (E::Fr::from_repr((witness_s_denominator as u64).into())).unwrap();
+	let ssim_denom = AllocatedPixel::alloc(cs.namespace(|| "ssim denom"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_ssim_denominator as u64).into())).unwrap();
 		Ok(value)
-	})?;	
+	})?;
+	
+	ssim_denom.inputize(cs.namespace(|| "ssim den"))?;
+		
 	cs.enforce(	|| "enforce lum denom", 
 		|lc| { lc + ssim_l_denom.variable}, 	
 		|lc| { lc + ssim_c_denom.variable },
-		|lc| { lc + s_denom.variable},
+		|lc| { lc + ssim_denom.variable},
 	);	
-	//(s_numerator, s_denom)
-	Ok((s_numerator,s_denom))
+	Ok((ssim_numerator,ssim_denom))
 }
 
 pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
@@ -944,6 +949,7 @@ impl<'a> SsimApi<'a, Ssim<Bls12>> for SsimApp {
     }
 }
 
+#[derive(RustcDecodable, RustcEncodable)]
 #[derive(Clone)]
 #[derive(Default)]
 pub struct Witness {
@@ -976,8 +982,8 @@ pub struct Witness {
 	c_denom: u32,
 	c2: u32,
 	
-	ssim_numerator: u32,
-	ssim_denom: u32
+	pub ssim_numerator: u32,
+	pub ssim_denom: u32,
 }	
 
 

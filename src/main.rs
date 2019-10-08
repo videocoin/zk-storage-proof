@@ -19,12 +19,19 @@ extern crate bellperson;
 extern crate paired;
 extern crate pbr;
 extern crate rand;
+extern crate rustc_serialize;
+
 use rand::{Rng, SeedableRng, XorShiftRng};
 use ff::{Field, PrimeField, PrimeFieldDecodingError, PrimeFieldRepr};
 use std::fs::File;
+use std::io::prelude::*;
+use std::io::Read;
 use std::path::Path;
 use std::env;
 use std::time::{Duration, Instant};
+use std::process;
+use rustc_serialize::json::Json;
+use rustc_serialize::json;
 
 //mod macroblock;
 mod pixel;
@@ -67,10 +74,9 @@ fn merkel_path(
 	(auth_path, leaf, root, tree_depth)
 }
 
-fn setup()
+fn setup(crs_path: String)
 {	
 	let now = Instant::now();
-	let crs_path: String = "ssim_crs.dat".to_string();
 
 	let mut ssim= mb_ssim::SsimApp::default();
 	let p = ssim.setup();
@@ -79,11 +85,17 @@ fn setup()
 	println!("Setup {}", now.elapsed().as_millis());
 }
 
-fn genproof()
+fn genproof(
+	crs_path: String, 
+	proof_path: String, 
+	input1_path: String, 
+	input2_path: String, 
+	witness_path: String,)
 {	
 	let now = Instant::now();
-	let crs_path: String = "ssim_crs.dat".to_string();
+
     let file_path = Path::new(&crs_path);
+
 	let mut ssim= mb_ssim::SsimApp::default();
     let groth_params: Parameters<Bls12> = {
 		let f = File::open(&crs_path).expect("failed to open rssim_crs.dat");
@@ -97,47 +109,51 @@ fn genproof()
 		
 	let witns = mb_ssim::gen_witness(&src_mb.clone(), &dst_mb.clone());
 	let proof_start = Instant::now();		
-	let proof = ssim.create_proof(&groth_params, src_mb, dst_mb, witns);
+	let proof = ssim.create_proof(&groth_params, src_mb, dst_mb, witns.clone());
 	println!("Proof generation {}", now.elapsed().as_millis());
-/*	let mut proof_vec = vec![];
-	proof_vec.truncate(0);
-	proof.write(&mut proof_vec).expect("failed to serialize proof");
-	println!("Proof len={:?} bytes={:?}", proof_vec.len(), proof_vec);
-*/	
+
 	// save to file
-	let proof_path: String = "ssim_proof.dat".to_string();
-	let mut f = File::create(&proof_path).expect("faild to open ssim_proof.dat file");
-	proof.write(&mut f).expect("failed to serialize proof to file ssim_proof.dat");
+	let mut proof_f = File::create(&proof_path).expect("faild to create proof file");
+	proof.write(&mut proof_f).expect("failed to serialize proof file");
 	
+	let mut witness_f = File::create(witness_path).expect("failed to create witness file");
+    let witness_encoded = json::encode(&witns).unwrap();
+    witness_f.write_all(witness_encoded.as_bytes());
+
+	println!("ssim_num={:?} ssim_den={:?}", witns.ssim_numerator, witns.ssim_denom);
 	println!("Load CRS + Proof generation {}", now.elapsed().as_millis());
 }
 
-fn verify()
+fn get_witness(witness_path: String) -> Vec<u32> {
+	// let decoded: TestStruct = json::decode(&encoded[..]).unwrap();
+	let mut file = File::open(witness_path).expect("verify: faild to open witness file");
+	let mut data = String::new();
+	file.read_to_string(&mut data).expect("verify: faild to read witness file");
+	//let witness_j = Json::from_str(&data).expect("verify: faild to parse witness");
+	let witness: mb_ssim::Witness = json::decode(&data).unwrap();
+	let mut selected_fields: Vec<u32> = vec![];
+	selected_fields.push(witness.ssim_numerator);
+	selected_fields.push(witness.ssim_denom);
+	println!("witness {:?}", selected_fields);
+	selected_fields
+}
+
+fn verify(crs_path: String, proof_path: String, witness_path: String,)
 {
 	let now = Instant::now();	
-	let crs_path: String = "ssim_crs.dat".to_string();
+
     let file_path = Path::new(&crs_path);
 	let mut ssim= mb_ssim::SsimApp::default();
     let groth_params: Parameters<Bls12> = {
 		let f = File::open(&crs_path).expect("failed to open rssim_crs.dat");
 		Parameters::read(&f, false).expect("failed to read rssim_crs.dat")
 	};
-	
-	let mb_size = 256;
-	let mut rng = rand::thread_rng();
-	let src_mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
-	let dst_mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
-		
-	let witns = mb_ssim::gen_witness(&src_mb.clone(), &dst_mb.clone());
-	
-	// read from file
-	
-	let proof_path: String = "ssim_proof.dat".to_string();
+			
 	let mut f = File::open(&proof_path).expect("faild to open ssim_proof.dat file");
 	let proof: Proof<Bls12> = Proof::read(&mut f).expect("failed to read proof to file ssim_proof.dat");
 	
 	let pvk = prepare_verifying_key(&groth_params.vk);
-	let public_inputs = vec![];
+	let public_inputs = get_witness(witness_path);
 	let verify_start = Instant::now();	
 	let res = ssim.verify_proof(&pvk, &proof, public_inputs).unwrap();
 	println!("Verificaiton result = {:?}", res);
@@ -157,15 +173,40 @@ fn main()
 	match cmd.as_ref() {
 		"setup" => {
 			println!("Setup");
-			setup();
+			if args.len() >= 3 {
+    			let crs_file = args[2].clone();
+				setup(crs_file)
+			} else {
+				println!("zkptrans setup crs_file");
+				process::exit(1);
+			}			
 		},
 		"genproof" => {
 			println!("genproof");
-			genproof()
+			if args.len() >= 7 {
+    			let crs_file = args[2].clone();
+				let proof_file = args[3].clone();
+				let input1_file = args[4].clone();
+				let input2_file = args[5].clone();
+				let witness_file = args[6].clone();
+				genproof(crs_file, proof_file, input1_file, input2_file, witness_file)
+			} else {
+				println!("zkptrans genproof crs_file proof_file input1_file input_2 file witness_file");
+				process::exit(1);
+			}
+
 		},
 		"verify" => {
 			println!("verify");
-			verify()
+			if args.len() >= 5 {
+    			let crs_file = args[2].clone();
+				let proof_file = args[3].clone();
+				let witness_file = args[4].clone();
+				verify(crs_file, proof_file, witness_file)
+			} else {
+				println!("zkptrans verify crs_file proof_file witness_file");
+				process::exit(1);
+			}
 		},
 		_ => println!("Unknown"),
 	}
