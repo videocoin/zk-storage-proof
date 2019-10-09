@@ -47,6 +47,14 @@ use storage_proofs::merkle::{MerkleProof, MerkleTree};
 use bellperson::groth16::{Parameters, prepare_verifying_key, Proof};
 use mb_ssim::SsimApi;
 
+
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Clone)]
+#[derive(Default)]
+pub struct SampleMb {
+	pixels: Vec<u16>,
+}
+
 fn merkel_path(
 	data: Vec<u64>,
 ) -> (Vec<Option<(Fr, bool)>>, Fr, Fr, usize) {
@@ -85,6 +93,16 @@ fn setup(crs_path: String)
 	println!("Setup {}", now.elapsed().as_millis());
 }
 
+fn get_input_mb(input_file: String) -> Vec<u32>
+{
+	let mut file = File::open(input_file).expect("verify: faild to open input_file file");
+	let mut data = String::new();
+	file.read_to_string(&mut data).expect("verify: faild to read witness file");
+	let sample_mb: SampleMb = json::decode(&data).unwrap();
+	let pixels =  sample_mb.pixels.iter().map(|x| *x as u32).collect();
+	pixels
+}
+
 fn genproof(
 	crs_path: String, 
 	proof_path: String, 
@@ -104,15 +122,15 @@ fn genproof(
 	
 	let mb_size = 256;
 	let mut rng = rand::thread_rng();
-	let src_mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
-	let dst_mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
+	let src_mb: Vec<u32> = get_input_mb(input1_path);
+	let dst_mb: Vec<u32> = get_input_mb(input2_path);
 		
 	let witns = mb_ssim::gen_witness(&src_mb.clone(), &dst_mb.clone());
 	let proof_start = Instant::now();		
 	let proof = ssim.create_proof(&groth_params, src_mb, dst_mb, witns.clone());
 	println!("Proof generation {}", now.elapsed().as_millis());
 
-	// save to file
+	// save proof to file
 	let mut proof_f = File::create(&proof_path).expect("faild to create proof file");
 	proof.write(&mut proof_f).expect("failed to serialize proof file");
 	
@@ -159,6 +177,28 @@ fn verify(crs_path: String, proof_path: String, witness_path: String,)
 	println!("Verificaiton result = {:?}", res);
 	println!("Only Verification {}", verify_start.elapsed().as_millis());	
 	println!("Load Proof+Verification {}", now.elapsed().as_millis());	
+}
+
+
+
+fn gensample(mb_size: u32, sample1_file: String, sample2_file: String) 
+{
+	let mut rng = rand::thread_rng();
+	
+	let sample_mb1 = SampleMb{
+						pixels: (0..mb_size).map(|x| (rng.gen::<u8>()) as u16).collect()
+					 };
+	let sample_mb2 = SampleMb{
+						pixels: (0..mb_size).map(|x| (rng.gen::<u8>()) as u16).collect()
+					 };
+	
+	let sample1_encoded = json::encode(&sample_mb1).unwrap();
+    let mut sample1_f = File::create(&sample1_file).expect("faild to create input2 file");
+	sample1_f.write_all(sample1_encoded.as_bytes());
+	
+	let sample2_encoded = json::encode(&sample_mb2).unwrap();
+	let mut input2_f = File::create(&sample2_file).expect("faild to create input2 file");
+	input2_f.write_all(sample2_encoded.as_bytes());	
 }
 
 fn main()
@@ -208,6 +248,17 @@ fn main()
 				process::exit(1);
 			}
 		},
+		"gensample" => {
+			println!("gensample");
+			if args.len() >= 4 {
+    			let input1 = args[2].clone();
+				let input2 = args[3].clone();
+				gensample(256, input1, input2)
+			} else {
+				println!("zkptrans gensample input1_file input2_file");
+				process::exit(1);
+			}
+		},		
 		_ => println!("Unknown"),
 	}
 	//let src_mb: Vec<u32> = (0..256).map(|x| x).collect();
