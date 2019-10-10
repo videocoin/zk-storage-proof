@@ -31,12 +31,21 @@
 #include <stdbool.h>
 #include <string.h>
 
+extern "C"
+{
 #include "libavutil/adler32.h"
 #include "libavcodec/avcodec.h"
 #include "libavformat/avformat.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/timestamp.h"
 #include "libavutil/base64.h"
+}
+
+#include "json.hpp"
+#include <iostream>
+
+using json::JSON;
+using namespace std;
 
 AVFormatContext* fmt_ctx;
 int frame_offset = 0;
@@ -128,7 +137,7 @@ int extractLuma(AVFrame *frame, unsigned char *pRawY, int x , int y, int width, 
 	if((x + width) > frame->linesize[0] || (y + height) > frame->height)
 		return -1;
 	for (int v=0; v < height; v++){
-		char *pSrc = frame->data[0] + (y + v)  * frame->linesize[0] + x;
+		char *pSrc = (char *)frame->data[0] + (y + v)  * frame->linesize[0] + x;
 		for (int w=0; w < width; w++){
 			*pDst++ = *pSrc++;
 		}
@@ -143,7 +152,7 @@ int main(int argc, char **argv)
     uint8_t inbuf[1024];
     int frame_count = 0;
 	av_register_all();
-	parse_options(argc, argv);
+	parse_options(argc, (const char **)argv);
 
 	pkt = (AVPacket *)av_malloc(sizeof(AVPacket));
 
@@ -215,8 +224,8 @@ int main(int argc, char **argv)
 	if(ffmpeg_videoStreamIndex == -1){
 		fprintf(stderr, "Video stream not found.");
 	}
-	unsigned char *pRawY = malloc(region_width * region_height);
-
+	unsigned char *pRawY = (unsigned char *)malloc(region_width * region_height);
+	int extracted = 0;
 	while(av_read_frame(fmt_ctx, pkt) >= 0) {
 		if (pkt && pkt->size && ffmpeg_videoStreamIndex == pkt->stream_index) {
 			if (h264bsfc) {
@@ -239,6 +248,7 @@ int main(int argc, char **argv)
 					fprintf(stderr, "Frame decoded\n");
 					if(frame_count == frame_offset) {
 						extractLuma(frame, pRawY, 0, 0, region_width, region_height);
+						extracted = 1;
 						break;
 					}
 					frame_count++;
@@ -247,6 +257,16 @@ int main(int argc, char **argv)
 		}
 	    av_packet_unref(pkt);
 	}
+	if(extracted) {
+		json::JSON obj;
+		JSON array;
+		for (int i = 0; i < region_width * region_height; i++) {
+			array[i] = pRawY[i];
+		}
+		obj["pixels"] = array;
+		cout << obj << endl;
+	}
+
 	free(mb_data);
 	free (pRawY);
     return 0;
