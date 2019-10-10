@@ -41,6 +41,9 @@
 AVFormatContext* fmt_ctx;
 int frame_offset = 0;
 int macroblock_offset = 0;
+int region_width = 32;
+int region_height = 32;
+
 int ffmpeg_videoStreamIndex;
 AVBitStreamFilterContext* h264bsfc = NULL;
 
@@ -81,7 +84,7 @@ void parse_options(int argc, const char* argv[])
 	}
 	if(ARG_HELP || ARG_VIDEO_PATH == NULL)
 	{
-		fprintf(stderr, "Usage: mpegflow [--raw | [[--grid8x8] [--occupancy]]] videoPath\n  --help and -h will output this help message.\n  --raw will prevent motion vectors from being arranged in matrices.\n  --grid8x8 will force fine 8x8 grid.\n  --occupancy will append occupancy matrix after motion vector matrices.\n  --quiet will suppress debug output.\n");
+		fprintf(stderr, "Usage: gen-hash [--frame] [--macroblock] videoPath\n  --help and -h will output this help message.\n   --frame frame offset.\n  --macroblock macroblock offset.\n");
 		exit(1);
 	}
 }
@@ -212,7 +215,7 @@ int main(int argc, char **argv)
 	if(ffmpeg_videoStreamIndex == -1){
 		fprintf(stderr, "Video stream not found.");
 	}
-	unsigned char *pRawY = malloc(32*32);
+	unsigned char *pRawY = malloc(region_width * region_height);
 
 	while(av_read_frame(fmt_ctx, pkt) >= 0) {
 		if (pkt && pkt->size && ffmpeg_videoStreamIndex == pkt->stream_index) {
@@ -234,11 +237,13 @@ int main(int argc, char **argv)
 					exit(1);
 				} else if (got_frame){
 					fprintf(stderr, "Frame decoded\n");
-					extractLuma(frame, pRawY, 0, 0, 32, 32);
+					if(frame_count == frame_offset) {
+						extractLuma(frame, pRawY, 0, 0, region_width, region_height);
+						break;
+					}
+					frame_count++;
 				}
 			}
-
-			frame_count++;
 		}
 	    av_packet_unref(pkt);
 	}
