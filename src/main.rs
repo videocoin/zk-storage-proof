@@ -231,7 +231,7 @@ fn main()
 				let witness_file = args[6].clone();
 				genproof(crs_file, proof_file, input1_file, input2_file, witness_file)
 			} else {
-				println!("zkptrans genproof crs_file proof_file input1_file input_2 file witness_file");
+				println!("zkptrans genproof crs_file proof_file input1_file input2_file witness_file");
 				process::exit(1);
 			}
 
@@ -259,7 +259,7 @@ fn main()
 				process::exit(1);
 			}
 		},		
-		_ => println!("Unknown"),
+		_ => println!("Unknown command\n "),
 	}
 	//let src_mb: Vec<u32> = (0..256).map(|x| x).collect();
 	//let dst_mb: Vec<u32> = (0..256).map(|x| x).collect();

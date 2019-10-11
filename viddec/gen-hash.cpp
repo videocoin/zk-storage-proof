@@ -43,6 +43,7 @@ extern "C"
 
 #include "json.hpp"
 #include <iostream>
+#include <fstream>
 
 using json::JSON;
 using namespace std;
@@ -50,8 +51,10 @@ using namespace std;
 AVFormatContext* fmt_ctx;
 int frame_offset = 0;
 int macroblock_offset = 0;
-int region_width = 32;
-int region_height = 32;
+int region_width = 16;
+int region_height = 16;
+const char *output_file = "test.json";
+const char* input_file;
 
 int ffmpeg_videoStreamIndex;
 AVBitStreamFilterContext* h264bsfc = NULL;
@@ -60,7 +63,7 @@ static long privateId = 0;
 AVDictionary *frameDict = NULL;
 
 bool ARG_QUIET, ARG_HELP;
-const char* ARG_VIDEO_PATH;
+
 void parse_options(int argc, const char* argv[]);
 void hexDump (unsigned char *pData, int n);
 static char* itoa(int val, int base);
@@ -86,12 +89,18 @@ void parse_options(int argc, const char* argv[])
 			if(i+1 < argc)
 				macroblock_offset = atoi(argv[i+1]);
 			i++;
-		}else {
-			ARG_VIDEO_PATH = argv[i];
+		} else if(strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--input") == 0) {
+			if(i+1 < argc)
+				input_file = argv[i+1];
+			i++;
+		} else if(strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+			if(i+1 < argc)
+				output_file = argv[i+1];
+			i++;
 		}
 		i++;
 	}
-	if(ARG_HELP || ARG_VIDEO_PATH == NULL)
+	if(ARG_HELP || input_file == NULL)
 	{
 		fprintf(stderr, "Usage: gen-hash [--frame] [--macroblock] videoPath\n  --help and -h will output this help message.\n   --frame frame offset.\n  --macroblock macroblock offset.\n");
 		exit(1);
@@ -196,8 +205,8 @@ int main(int argc, char **argv)
 
 	int err = 0;
 
-	if ((err = avformat_open_input(&fmt_ctx, ARG_VIDEO_PATH, NULL, NULL)) != 0) {
-		fprintf(stderr, "Couldn't open file. Possibly it doesn't exist.");
+	if ((err = avformat_open_input(&fmt_ctx, input_file, NULL, NULL)) != 0) {
+		fprintf(stderr, "Couldn't open file %s. Possibly it doesn't exist.\n", input_file);
 		exit(1);
 	}
 
@@ -260,11 +269,13 @@ int main(int argc, char **argv)
 	if(extracted) {
 		json::JSON obj;
 		JSON array;
+		std::ofstream outfile(output_file);
 		for (int i = 0; i < region_width * region_height; i++) {
 			array[i] = pRawY[i];
 		}
 		obj["pixels"] = array;
 		cout << obj << endl;
+		outfile << obj << endl;
 	}
 
 	free(mb_data);
