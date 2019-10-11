@@ -654,7 +654,7 @@ pub fn ssim_constraint<E: Engine, CS: ConstraintSystem<E>>(
 		Ok(value)
 	})?;
 	
-	ssim_numerator.inputize(cs.namespace(|| "ssim num"))?;
+	//ssim_numerator.inputize(cs.namespace(|| "ssim num"))?;
 	
 	cs.enforce(	|| "enforce lum numerator", 
 		|lc| { lc +  ssim_l_numerator.variable }, 	
@@ -671,7 +671,7 @@ pub fn ssim_constraint<E: Engine, CS: ConstraintSystem<E>>(
 		Ok(value)
 	})?;
 	
-	ssim_denom.inputize(cs.namespace(|| "ssim den"))?;
+	//ssim_denom.inputize(cs.namespace(|| "ssim den"))?;
 		
 	cs.enforce(	|| "enforce lum denom", 
 		|lc| { lc + ssim_l_denom.variable}, 	
@@ -689,10 +689,11 @@ pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	let circ_mb_x = gen_sample(cs.namespace(|| "src mb"), c.src_mb.clone());
 	let circ_mb_y = gen_sample(cs.namespace(|| "dst mb"), c.dst_mb.clone());
 	let circ_mb_sum_x = sum_vec(cs.namespace(|| "src sum mb"), &circ_mb_x).unwrap();
+
 	let circ_mb_sum_y = sum_vec(cs.namespace(|| "dst sum mb"), &circ_mb_y).unwrap();
 	
-	let circ_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &circ_mb_sum_x, witns.sum_src as u64, witns.num_samples as u64).unwrap();
-	let circ_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &circ_mb_sum_y, witns.sum_dst as u64, witns.num_samples as u64).unwrap();
+	let circ_mean_src = div_constraint(cs.namespace(|| "src meant mb"), &circ_mb_sum_x, witns.sum_x as u64, witns.num_samples as u64).unwrap();
+	let circ_mean_dst = div_constraint(cs.namespace(|| "dst meant mb"), &circ_mb_sum_y, witns.sum_y as u64, witns.num_samples as u64).unwrap();
 	
 	
 	let (circ_l_numerator, circ_l_denom, c1_crc) = ssim_lum_or_contrast(cs.namespace(|| "ssim lum"), &circ_mean_src, &circ_mean_dst, witns.c1 as u64, witns.l_numerator as u64, witns.l_denom as u64).unwrap();
@@ -700,18 +701,18 @@ pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	//
 	// Structure
 	//
-	let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &c.src_mb, witns.sum_src / witns.num_samples);
-	let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &c.dst_mb, witns.sum_dst / witns.num_samples);
+	let circ_src_sign = gen_sample_sign(cs.namespace(|| "sign src"), &c.src_mb, witns.sum_x / witns.num_samples);
+	let circ_dst_sign = gen_sample_sign(cs.namespace(|| "sign dst"), &c.dst_mb, witns.sum_y / witns.num_samples);
 	
 	let mut circ_diff_vec_src = absdiff_vec(cs.namespace(|| "absdiff a"), &circ_mb_x, &circ_mean_src, &circ_src_sign);
 	let mut circ_diff_vec_dst = absdiff_vec(cs.namespace(|| "abs diff b"),  &circ_mb_y, &circ_mean_dst, &circ_dst_sign);
 
 	let (circ_sigma_x_sq_sum, circ_sigma_x_sq, circ_sigma_x) = vairance_constraint(cs.namespace(|| "sigma x const"), 
 			&circ_diff_vec_src, &circ_diff_vec_src, witns.sigma_x_sq_sum, witns.sigma_x, witns.sigma_x_frac);
-
+	
 	let (circ_sigma_y_sq_sum, circ_sigma_y_sq, circ_sigma_y) = vairance_constraint(cs.namespace(|| "sigma y const"), 
 			&circ_diff_vec_dst, &circ_diff_vec_dst, witns.sigma_y_sq_sum, witns.sigma_y, witns.sigma_y_frac);
-
+	
 	let (circ_sigma_xy_sum, circ_sigma_xy) = covairance_constraint(cs.namespace(|| "sigma xy const"), 
 			&circ_diff_vec_src, &circ_diff_vec_dst, witns.sigma_xy_sum, witns.sigma_xy);
 	
@@ -724,6 +725,12 @@ pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	// ssim
 	//
 	let (circ_ssim_numerator, circ_ssim_denom) = ssim_constraint(cs.namespace(|| "ssim constraint"), &circ_l_numerator, &circ_sigma_xy, &c2_circ, &circ_l_denom, &circ_c_denom, witns.ssim_numerator as u64, witns.ssim_denom as u64).unwrap();
+	
+	circ_mb_sum_y.inputize(cs.namespace(|| "sum y"))?;
+	circ_sigma_y.inputize(cs.namespace(|| "sigma_y"))?;
+	circ_ssim_numerator.inputize(cs.namespace(|| "ssim_numerator"))?;
+	circ_ssim_denom.inputize(cs.namespace(|| "ssim_denom"))?;
+	
 	Ok((circ_ssim_numerator, circ_ssim_denom))
 }
 
@@ -775,10 +782,10 @@ fn get_mb_covariance(mb_src: &Vec<u32>, mb_dst: &Vec<u32>, mean_src: u32, mean_d
 
 fn get_witness_sigma(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> (u32, u32, u32, u32) {
 	
-	let sum_src = get_mb_sum(src_mb);
-	let sum_dst = get_mb_sum(dst_mb);
+	let sum_x = get_mb_sum(src_mb);
+	let sum_y = get_mb_sum(dst_mb);
 	let num_samples: u32 = src_mb.len() as u32;
-	let sigma_sq_sum = get_mb_covariance(&src_mb, &dst_mb, sum_src / num_samples, sum_dst/ num_samples);
+	let sigma_sq_sum = get_mb_covariance(&src_mb, &dst_mb, sum_x / num_samples, sum_y/ num_samples);
 	let sigma_sq = sigma_sq_sum / num_samples;		
 	let (sigma, sigma_frac) = get_sqrt(sigma_sq);
 	(sigma_sq_sum, sigma_sq, sigma, sigma_frac)
@@ -786,10 +793,10 @@ fn get_witness_sigma(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> (u32, u32, u32, u3
 
 fn get_witness_sigma_xy(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> (u32, u32) {
 	
-	let sum_src = get_mb_sum(src_mb);
-	let sum_dst = get_mb_sum(dst_mb);
+	let sum_x = get_mb_sum(src_mb);
+	let sum_y = get_mb_sum(dst_mb);
 	let num_samples: u32 = src_mb.len() as u32;
-	let sigma_xy_sum = get_mb_covariance(&src_mb, &dst_mb, sum_src / num_samples, sum_dst/ num_samples);
+	let sigma_xy_sum = get_mb_covariance(&src_mb, &dst_mb, sum_x / num_samples, sum_y/ num_samples);
 	let sigma_xy = sigma_xy_sum / num_samples;		
 	(sigma_xy_sum, sigma_xy)
 }
@@ -932,8 +939,8 @@ impl<'a> SsimApi<'a, Ssim<Bls12>> for SsimApp {
 #[derive(Default)]
 pub struct Witness {
 	num_samples: u32,
-	sum_src: u32,
-	sum_dst: u32,
+	sum_x: u32,
+	pub sum_y: u32,
 	l_numerator: u32,
 	l_denom: u32,
 	c1: u32,
@@ -945,7 +952,7 @@ pub struct Witness {
 	
 	sigma_y_sq_sum: u32, 
 	sigma_y_sq: u32, 
-	sigma_y: u32, 
+	pub sigma_y: u32, 
 	sigma_y_frac: u32,
 	
 	sigma_xy_sum: u32, 
@@ -966,15 +973,15 @@ pub struct Witness {
 pub fn gen_witness(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> Witness {
 	
 		let num_samples = src_mb.len() as u32;
-		let sum_src = get_mb_sum(&src_mb);
-		let sum_dst = get_mb_sum(&dst_mb);
+		let sum_x = get_mb_sum(&src_mb);
+		let sum_y = get_mb_sum(&dst_mb);
 
 		//
 		// Lumen
 		//
 		let c1 = 0;
-		let l_numerator = 2 * (sum_src / num_samples) * (sum_dst / num_samples) + c1; 
-		let l_denom = ((sum_src / num_samples) * (sum_src / num_samples) + (sum_dst / num_samples) * (sum_dst / num_samples)) + c1;
+		let l_numerator = 2 * (sum_x / num_samples) * (sum_y / num_samples) + c1; 
+		let l_denom = ((sum_x / num_samples) * (sum_x / num_samples) + (sum_y / num_samples) * (sum_y / num_samples)) + c1;
 		let (sigma_x_sq_sum, sigma_x_sq, sigma_x, sigma_x_frac)= get_witness_sigma(&src_mb, &src_mb);		
 		let (sigma_y_sq_sum, sigma_y_sq, sigma_y, sigma_y_frac)= get_witness_sigma(&dst_mb, &dst_mb);
 		let (sigma_xy_sum, sigma_xy)= get_witness_sigma_xy(&src_mb, &dst_mb);
@@ -989,8 +996,8 @@ pub fn gen_witness(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> Witness {
 		
 		let mut witns = Witness {
 			num_samples,
-			sum_src,
-			sum_dst,
+			sum_x,
+			sum_y,
 			l_numerator,
 			l_denom,
 			c1,

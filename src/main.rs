@@ -150,6 +150,8 @@ fn get_witness(witness_path: String) -> Vec<u32> {
 	//let witness_j = Json::from_str(&data).expect("verify: faild to parse witness");
 	let witness: mb_ssim::Witness = json::decode(&data).unwrap();
 	let mut selected_fields: Vec<u32> = vec![];
+	selected_fields.push(witness.sum_y);
+	selected_fields.push(witness.sigma_y);
 	selected_fields.push(witness.ssim_numerator);
 	selected_fields.push(witness.ssim_denom);
 	println!("witness {:?}", selected_fields);
