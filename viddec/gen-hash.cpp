@@ -39,6 +39,8 @@ extern "C"
 #include "libavutil/imgutils.h"
 #include "libavutil/timestamp.h"
 #include "libavutil/base64.h"
+#include "libavutil/pixfmt.h"
+#include "libswscale/swscale.h"
 }
 
 #include "json.hpp"
@@ -140,9 +142,47 @@ int getParam(AVFrame *frame, char *key)
 	return -1;
 }
 
-int extractLuma(AVFrame *frame, unsigned char *pRawY, int x , int y, int width, int height)
+
+
+
+int ScaleImg(AVCodecContext *pCodecCtx,AVFrame *src_picture, AVFrame *dst_picture, int nDstW, int nDstH )
 {
-	unsigned char *pDst = pRawY;
+	int i ;
+	int nDstStride[3];
+	int nSrcH = pCodecCtx->height;
+	int nSrcW = pCodecCtx->width;
+	struct SwsContext* m_pSwsContext;
+
+	dst_picture->linesize[0] = nDstW;
+	dst_picture->linesize[1] = nDstW / 2;
+	dst_picture->linesize[2] = nDstW / 2;
+
+	printf("nSrcW%d\n",nSrcW);
+
+	m_pSwsContext = sws_getContext(nSrcW, nSrcH, AV_PIX_FMT_YUV420P,
+			nDstW, nDstH, AV_PIX_FMT_YUV420P,
+			SWS_BICUBIC,
+			NULL, NULL, NULL);
+
+
+	if (NULL == m_pSwsContext) {
+		printf("ffmpeg get context error!\n");
+		exit (-1);
+	}
+
+
+	sws_scale(m_pSwsContext, src_picture->data,src_picture->linesize, 0, pCodecCtx->height, dst_picture->data, dst_picture->linesize);
+
+
+	printf("line0:%d line1:%d line2:%d\n",dst_picture->linesize[0] ,dst_picture->linesize[1] ,dst_picture->linesize[2]);
+	sws_freeContext(m_pSwsContext);
+
+	return 1 ;
+}
+
+int extractLuma(AVCodecContext *pCodecCtx, AVFrame *frame, unsigned char *pRawY, int x , int y, int width, int height)
+{
+/*	unsigned char *pDst = pRawY;
 	if((x + width) > frame->linesize[0] || (y + height) > frame->height)
 		return -1;
 	for (int v=0; v < height; v++){
@@ -150,9 +190,28 @@ int extractLuma(AVFrame *frame, unsigned char *pRawY, int x , int y, int width, 
 		for (int w=0; w < width; w++){
 			*pDst++ = *pSrc++;
 		}
+	}*/
+
+	AVFrame *dst_frame = NULL;;
+	if (!(dst_frame = av_frame_alloc())) {
+		fprintf(stderr, "Could not allocate frame\n");
+			exit(1);
+	}
+	ScaleImg(pCodecCtx, frame, dst_frame, width, height);
+
+	x = 0; y = 0;
+	unsigned char *pDst = pRawY;
+		if((x + width) > dst_frame->linesize[0] || (y + height) > dst_frame->height)
+			return -1;
+		for (int v=0; v < height; v++){
+			char *pSrc = (char *)dst_frame->data[0] + (y + v)  * dst_frame->linesize[0] + x;
+			for (int w=0; w < width; w++){
+				*pDst++ = *pSrc++;
+			}
 	}
 	return 0;
 }
+
 
 int main(int argc, char **argv)
 {
@@ -215,8 +274,9 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
+	AVCodecContext *codec_ctx = NULL;
 	for(int i = 0; i < fmt_ctx->nb_streams; i++) {
-		AVCodecContext *codec_ctx = fmt_ctx->streams[i]->codec;
+		codec_ctx = fmt_ctx->streams[i]->codec;
 		if( AVMEDIA_TYPE_VIDEO == codec_ctx->codec_type && ffmpeg_videoStreamIndex < 0 ) {
 			AVCodec *pCodec = avcodec_find_decoder(codec_ctx->codec_id);
 			AVDictionary *opts = NULL;
@@ -256,7 +316,7 @@ int main(int argc, char **argv)
 				} else if (got_frame){
 					fprintf(stderr, "Frame decoded\n");
 					if(frame_count == frame_offset) {
-						extractLuma(frame, pRawY, 0, 0, region_width, region_height);
+						extractLuma(codec_ctx, frame, pRawY, 0, 0, region_width, region_height);
 						extracted = 1;
 						break;
 					}
