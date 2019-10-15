@@ -681,6 +681,51 @@ pub fn ssim_constraint<E: Engine, CS: ConstraintSystem<E>>(
 	Ok((ssim_numerator,ssim_denom))
 }
 
+pub fn ssim_m_constraint<E: Engine, CS: ConstraintSystem<E>>(
+	mut cs: CS,
+	ssim_l_numerator: &AllocatedPixel<E>,
+	sigma_xy: &AllocatedPixel<E>,
+	circ_c2: &AllocatedPixel<E>,	
+	ssim_l_denom: &AllocatedPixel<E>,
+	sigma_x_sq: &AllocatedPixel<E>,
+	sigma_y_sq: &AllocatedPixel<E>,	
+	witness_ssim_m_numerator: u64,
+	witness_ssim_m_denominator: u64,
+) -> Result<(AllocatedPixel<E>, AllocatedPixel<E>), SynthesisError>//-> (AllocatedPixel<E>, AllocatedPixel<E>)
+{
+
+	let ssim_m_numerator = AllocatedPixel::alloc(cs.namespace(|| "ssim numerator"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_ssim_m_numerator as u64).into())).unwrap();
+		Ok(value)
+	})?;
+	
+	//ssim_numerator.inputize(cs.namespace(|| "ssim num"))?;
+	
+	cs.enforce(	|| "enforce lum numerator", 
+		|lc| { lc +  ssim_l_numerator.variable }, 	
+		|lc| { 
+			let mut coeff = E::Fr::one();
+			coeff.double();
+			lc + (coeff,  sigma_xy.variable) + circ_c2.variable
+		},
+		|lc| { lc + ssim_m_numerator.variable},
+	);	
+
+	let ssim_m_denom = AllocatedPixel::alloc(cs.namespace(|| "ssim denom"), || {
+		let value: E::Fr = (E::Fr::from_repr((witness_ssim_m_denominator as u64).into())).unwrap();
+		Ok(value)
+	})?;
+	
+	//ssim_denom.inputize(cs.namespace(|| "ssim den"))?;
+		
+	cs.enforce(	|| "enforce lum denom", 
+		|lc| { lc + ssim_l_denom.variable}, 	
+		|lc| { lc + sigma_x_sq.variable + sigma_y_sq.variable },
+		|lc| { lc + ssim_m_denom.variable},
+	);	
+	Ok((ssim_m_numerator,ssim_m_denom))
+}
+
 pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	mut cs: CS,
 	c: Ssim::<E>,
@@ -725,7 +770,8 @@ pub fn ssim_circuit<E: Engine, CS: ConstraintSystem<E>>(
 	// ssim
 	//
 	let (circ_ssim_numerator, circ_ssim_denom) = ssim_constraint(cs.namespace(|| "ssim constraint"), &circ_l_numerator, &circ_sigma_xy, &c2_circ, &circ_l_denom, &circ_c_denom, witns.ssim_numerator as u64, witns.ssim_denom as u64).unwrap();
-	
+	let (circ_ssim_m_numerator, circ_ssim_m_denom) = ssim_m_constraint(cs.namespace(|| "ssim m constraint"), &circ_l_numerator, &circ_sigma_xy, &c2_circ, &circ_l_denom, &circ_sigma_x_sq, &circ_sigma_y_sq, witns.ssim_m_numerator as u64, witns.ssim_m_denom as u64).unwrap();
+
 	circ_mb_sum_y.inputize(cs.namespace(|| "sum y"))?;
 	circ_sigma_y.inputize(cs.namespace(|| "sigma_y"))?;
 	circ_ssim_numerator.inputize(cs.namespace(|| "ssim_numerator"))?;
@@ -967,6 +1013,8 @@ pub struct Witness {
 	
 	pub ssim_numerator: u32,
 	pub ssim_denom: u32,
+	pub ssim_m_numerator: u32,
+	pub ssim_m_denom: u32,	
 }	
 
 
@@ -993,7 +1041,8 @@ pub fn gen_witness(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> Witness {
 		let c_denom = (sigma_x * sigma_x) + (sigma_y * sigma_y) + c3;
 		let ssim_numerator = l_numerator * 2 * sigma_xy + c2;
 		let ssim_denom = l_denom * c_denom;
-		
+		let ssim_m_numerator = l_numerator * (2 * sigma_xy + c2);
+		let ssim_m_denom = l_denom * (sigma_x_sq + sigma_y_sq);		
 		let mut witns = Witness {
 			num_samples,
 			sum_x,
@@ -1025,6 +1074,8 @@ pub fn gen_witness(src_mb: &Vec<u32>, dst_mb: &Vec<u32>) -> Witness {
 			
 			ssim_numerator,
 			ssim_denom,
+			ssim_m_numerator,
+			ssim_m_denom,			
 		};
 		
 		witns
