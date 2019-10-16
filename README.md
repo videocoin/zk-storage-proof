@@ -34,6 +34,29 @@ Each software component listed above is implemented and being tested.
 ## Challenges:
 VideoCoin blockchain uses precompiled contracts based on alt-bn256 curves  to support zkSnark proof-verification. Proof-of-storage implementation for VideoCoin is based on libraries using Jubjub/twisted Edwards curves. We need to extend VideoCoin blockchain to add new precompiled contracts (which requires go-videocoin calling external rust library) or run a oraclized verifier.
 
+## Testing 
+### SSIM
+
+Download this repo, and filecoin repo as explained above. 
+
+Setup (generation of CRS 
+```
+RUST_BACKTRACE=1 cargo run setup ssim_crs.dat
+```
+Extract macroblocks(Y or Luma) from source and transcoded streams using viddec/gen-hash. Run make before using the following command.
+```
+./viddec/gen-hash --frame 0 --macroblock 0 --input ~/test_20M.mp4 --output input1.json
+```
+
+Proof generation
+```
+RUST_BACKTRACE=1 cargo run genproof ssim_crs.dat ssim_proof.dat input1.json input2.json witness.dat
+```
+Verification
+```
+RUST_BACKTRACE=1 cargo run verify  ssim_crs.dat ssim_proof.dat witness.dat
+```
+
 ## References:
 
 1. VideoCoin - A Decentralized Video Encoding, Storage, and Content Distribution Network
