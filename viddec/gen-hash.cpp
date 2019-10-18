@@ -104,7 +104,7 @@ void parse_options(int argc, const char* argv[])
 	}
 	if(ARG_HELP || input_file == NULL)
 	{
-		fprintf(stderr, "Usage: gen-hash [--frame] [--macroblock] videoPath\n  --help and -h will output this help message.\n   --frame frame offset.\n  --macroblock macroblock offset.\n");
+		fprintf(stderr, "Usage: gen-hash [--frame] [--macroblock] --input videoPath --output input.json\n  --help and -h will output this help message.\n   --frame frame offset.\n  --macroblock macroblock offset.\n");
 		exit(1);
 	}
 }
