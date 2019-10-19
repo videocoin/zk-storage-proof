@@ -53,6 +53,7 @@ using namespace std;
 AVFormatContext* fmt_ctx;
 int frame_offset = 0;
 int macroblock_offset = 0;
+int fScale = 0;
 int region_width = 16;
 int region_height = 16;
 const char *output_file = "test.json";
@@ -99,12 +100,14 @@ void parse_options(int argc, const char* argv[])
 			if(i+1 < argc)
 				output_file = argv[i+1];
 			i++;
+		}  else if(strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--scale") == 0) {
+			fScale = 1;
 		}
 		i++;
 	}
 	if(ARG_HELP || input_file == NULL)
 	{
-		fprintf(stderr, "Usage: gen-hash [--frame] [--macroblock] --input videoPath --output input.json\n  --help and -h will output this help message.\n   --frame frame offset.\n  --macroblock macroblock offset.\n");
+		fprintf(stderr, "Usage: gen-hash [--frame <frame number>] [--macroblock <macroblock number>] --scale --input videoPath --output outfile.json\n  --help and -h will output this help message.\n   --frame frame offset.\n  --macroblock macroblock offset.\n");
 		exit(1);
 	}
 }
@@ -192,32 +195,32 @@ static void init_frame(AVCodecContext *c, AVFrame **framep, int width, int heigh
 
 int extractLuma(AVCodecContext *pCodecCtx, AVFrame *frame, unsigned char *pRawY, int x , int y, int width, int height)
 {
-#if 0
- 	unsigned char *pDst = pRawY;
-	if((x + width) > frame->linesize[0] || (y + height) > frame->height)
-		return -1;
-	for (int v=0; v < height; v++){
-		char *pSrc = (char *)frame->data[0] + (y + v)  * frame->linesize[0] + x;
-		for (int w=0; w < width; w++){
-			*pDst++ = *pSrc++;
+	if(fScale) {
+		AVFrame *dst_frame = NULL;;
+		init_frame(pCodecCtx, &dst_frame, width, height);
+
+		ScaleImg(frame, dst_frame);
+
+		x = 0; y = 0;
+		unsigned char *pDst = pRawY;
+			if((x + width) > dst_frame->linesize[0] || (y + height) > dst_frame->height)
+				return -1;
+			for (int v=0; v < height; v++){
+				char *pSrc = (char *)dst_frame->data[0] + (y + v)  * dst_frame->linesize[0] + x;
+				for (int w=0; w < width; w++){
+					*pDst++ = *pSrc++;
+				}
 		}
-	}
-#endif
-
-	AVFrame *dst_frame = NULL;;
-	init_frame(pCodecCtx, &dst_frame, width, height);
-
-	ScaleImg(frame, dst_frame);
-
-	x = 0; y = 0;
-	unsigned char *pDst = pRawY;
-		if((x + width) > dst_frame->linesize[0] || (y + height) > dst_frame->height)
+	} else {
+	 	unsigned char *pDst = pRawY;
+		if((x + width) > frame->linesize[0] || (y + height) > frame->height)
 			return -1;
 		for (int v=0; v < height; v++){
-			char *pSrc = (char *)dst_frame->data[0] + (y + v)  * dst_frame->linesize[0] + x;
+			char *pSrc = (char *)frame->data[0] + (y + v)  * frame->linesize[0] + x;
 			for (int w=0; w < width; w++){
 				*pDst++ = *pSrc++;
 			}
+		}
 	}
 	return 0;
 }
