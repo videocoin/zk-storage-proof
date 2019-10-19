@@ -145,44 +145,55 @@ int getParam(AVFrame *frame, char *key)
 
 
 
-int ScaleImg(AVCodecContext *pCodecCtx,AVFrame *src_picture, AVFrame *dst_picture, int nDstW, int nDstH )
+int ScaleImg(AVFrame *src_picture, AVFrame *dst_picture)
 {
-	int i ;
-	int nDstStride[3];
-	int nSrcH = pCodecCtx->height;
-	int nSrcW = pCodecCtx->width;
-	struct SwsContext* m_pSwsContext;
+	struct SwsContext* pSwsContext;
 
-	dst_picture->linesize[0] = nDstW;
-	dst_picture->linesize[1] = nDstW / 2;
-	dst_picture->linesize[2] = nDstW / 2;
-
-	printf("nSrcW%d\n",nSrcW);
-
-	m_pSwsContext = sws_getContext(nSrcW, nSrcH, AV_PIX_FMT_YUV420P,
-			nDstW, nDstH, AV_PIX_FMT_YUV420P,
+	pSwsContext = sws_getContext(
+			src_picture->width, src_picture->height, AV_PIX_FMT_YUV420P,
+			dst_picture->width, dst_picture->height, AV_PIX_FMT_YUV420P,
 			SWS_BICUBIC,
 			NULL, NULL, NULL);
 
 
-	if (NULL == m_pSwsContext) {
+	if (NULL == pSwsContext) {
 		printf("ffmpeg get context error!\n");
 		exit (-1);
 	}
 
 
-	sws_scale(m_pSwsContext, src_picture->data,src_picture->linesize, 0, pCodecCtx->height, dst_picture->data, dst_picture->linesize);
+	sws_scale(pSwsContext, src_picture->data,src_picture->linesize, 0, src_picture->height, dst_picture->data, dst_picture->linesize);
 
 
 	printf("line0:%d line1:%d line2:%d\n",dst_picture->linesize[0] ,dst_picture->linesize[1] ,dst_picture->linesize[2]);
-	sws_freeContext(m_pSwsContext);
+	sws_freeContext(pSwsContext);
 
 	return 1 ;
 }
 
+static void init_frame(AVCodecContext *c, AVFrame **framep, int width, int height) {
+    int ret;
+    AVFrame *frame;
+    frame = av_frame_alloc();
+    if (!frame) {
+        fprintf(stderr, "Could not allocate video frame\n");
+        exit(1);
+    }
+    frame->format = c->pix_fmt;
+    frame->width  = width;
+    frame->height = height;
+    ret = av_image_alloc(frame->data, frame->linesize, frame->width, frame->height, (AVPixelFormat)frame->format, 32);
+    if (ret < 0) {
+        fprintf(stderr, "Could not allocate raw picture buffer\n");
+        exit(1);
+    }
+    *framep = frame;
+}
+
 int extractLuma(AVCodecContext *pCodecCtx, AVFrame *frame, unsigned char *pRawY, int x , int y, int width, int height)
 {
-/*	unsigned char *pDst = pRawY;
+#if 0
+ 	unsigned char *pDst = pRawY;
 	if((x + width) > frame->linesize[0] || (y + height) > frame->height)
 		return -1;
 	for (int v=0; v < height; v++){
@@ -190,14 +201,13 @@ int extractLuma(AVCodecContext *pCodecCtx, AVFrame *frame, unsigned char *pRawY,
 		for (int w=0; w < width; w++){
 			*pDst++ = *pSrc++;
 		}
-	}*/
+	}
+#endif
 
 	AVFrame *dst_frame = NULL;;
-	if (!(dst_frame = av_frame_alloc())) {
-		fprintf(stderr, "Could not allocate frame\n");
-			exit(1);
-	}
-	ScaleImg(pCodecCtx, frame, dst_frame, width, height);
+	init_frame(pCodecCtx, &dst_frame, width, height);
+
+	ScaleImg(frame, dst_frame);
 
 	x = 0; y = 0;
 	unsigned char *pDst = pRawY;
