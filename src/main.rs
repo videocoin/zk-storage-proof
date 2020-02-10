@@ -47,6 +47,7 @@ use storage_proofs::merkle::{MerkleProof, MerkleTree};
 use bellperson::groth16::{Parameters, prepare_verifying_key, Proof};
 use mb_ssim::SsimApi;
 
+use storage_proofs::hasher::{Sha256Hasher, Domain, Hasher};
 
 #[derive(RustcDecodable, RustcEncodable)]
 #[derive(Clone)]
@@ -64,11 +65,41 @@ fn merkel_path(
 	let leaf = leaves[challenge_leaf_index];
 	let merk_tree = MerkleTree::<PedersenDomain, PedersenFunction>::from_data(leaves);
 
-    // generate merkle path for challenged node and parents
+	// generate merkle path for challenged node and parents
+	println!("======================================================================");
 	println!("{:?}", merk_tree);
 	println!("hash of uncle {:?}", merk_tree.read_at(2));
 	println!("hash of leaf {:?}", merk_tree.read_at(3));
     let merk_proof =  MerkleProof::<PedersenHasher>::new_from_proof(&merk_tree.gen_proof(challenge_leaf_index));
+	println!("merkel_proof {:?}", merk_proof);    
+	let auth_path = merk_proof.as_options();
+	let root : Fr  = merk_tree.root().into();
+	
+	println!("leaf {:?}", leaf);
+	println!("root {:?}", root);
+	for item in auth_path.clone() {
+		println!("{:?}", item);
+	}
+
+	(auth_path, leaf, root, tree_depth)
+}
+
+
+fn merkel_path_sha256(
+	data: Vec<u64>,
+) -> (Vec<Option<(Fr, bool)>>, Fr, Fr, usize) {
+	let challenge_leaf_index = 3;
+	let leaves: Vec<Fr> = data.iter().map(|x| (Fr::from_repr(FrRepr::from(*x as u64))).unwrap()).collect();
+	let tree_depth = (leaves.len() as f64).log2().ceil() as usize;
+	let leaf = leaves[challenge_leaf_index];
+	let merk_tree = MerkleTree::<<Sha256Hasher as Hasher>::Domain, <Sha256Hasher as Hasher>::Function>::from_data(data);
+
+	// generate merkle path for challenged node and parents
+	println!("======================================================================");
+	println!("{:?}", merk_tree);
+	println!("hash of uncle {:?}", merk_tree.read_at(2));
+	println!("hash of leaf {:?}", merk_tree.read_at(3));
+    let merk_proof =  MerkleProof::<Sha256Hasher>::new_from_proof(&merk_tree.gen_proof(challenge_leaf_index));
 	println!("merkel_proof {:?}", merk_proof);    
 	let auth_path = merk_proof.as_options();
 	let root : Fr  = merk_tree.root().into();
@@ -260,7 +291,36 @@ fn main()
 				println!("zkptrans gensample input1_file input2_file");
 				process::exit(1);
 			}
-		},		
+		},
+		"por" => {
+			let mut data:Vec<u64> = Vec::new();
+			for i in 0..512 {
+				data.push(i);
+			}
+			let (auth_path, leaf, root, tree_depth) = merkel_path(data);
+		
+			let end = 0;
+		
+		},	
+		"porsha256" => {
+			let mut data:Vec<u64> = Vec::new();
+			for i in 0..512 {
+				data.push(i);
+			}
+			let (auth_path, leaf, root, tree_depth) = merkel_path_sha256(data);
+		
+			let end = 0;
+		
+		},			
+		"zkpor" => {
+			let mut data:Vec<u64> = Vec::new();
+			for i in 0..512 {
+				data.push(i);
+			}
+			merkle_pot::create_proof(data);
+			let end = 0;
+		
+		},			
 		_ => println!("Unknown command\n "),
 	}
 	//let src_mb: Vec<u32> = (0..256).map(|x| x).collect();

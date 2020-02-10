@@ -36,6 +36,9 @@ use pbr::ProgressBar;
 //use logging_toolkit::make_logger;
 use slog::Logger;
 use super::constraint;
+use log::{info, trace, warn};
+extern crate env_logger;
+use std::process;
 
 //lazy_static! {
 //    pub static ref SP_LOG: Logger = make_logger("storage-proofs");
@@ -159,12 +162,10 @@ impl<'a, E: JubjubEngine> Circuit<E> for ProofOfRetrievability<'a, E> {
 
 /// Generate a unique cache path, based on the inputs.
 fn get_cache_path(
-    name: &str,
     version: usize,
 ) -> String {
     format!(
-        "/tmp/filecoin-proofs-cache-{}-{}",
-        name.to_ascii_lowercase(),
+        "vc-post-crs-{}.dat",
         version,
     )
 }
@@ -317,20 +318,22 @@ fn work_groth(
     let name = MerklePorApp::name();
 
     // caching
-    let p = get_cache_path(&name, 4);
+    let p = get_cache_path(4);
+    println!("crs path {}", p);
+    
     let cache_path = Path::new(&p);
     let groth_params: Parameters<Bls12> = if cache_path.exists() {
-        //info!(SP_LOG, "reading groth params from cache: {:?}", cache_path; "target" => "params");
+        info!( "reading groth params from cache: {:?}", cache_path);
         let f = File::open(&cache_path).expect("failed to read cache");
         Parameters::read(&f, false).expect("failed to read cached params")
     } else {
-        //info!(SP_LOG, "generating new groth params"; "target" => "params");
+        info!("generating new groth params");
         let p = instance.generate_groth_params(
             rng,
             &JUBJUB_BLS_PARAMS,
             tree_depth
         );
-        //info!(SP_LOG, "writing params to cache: {:?}", cache_path; "target" => "params");
+        info!( "writing params to cache: {:?}", cache_path);
 
         let mut f = File::create(&cache_path).expect("faild to open cache file");
         p.write(&mut f).expect("failed to write params to cache");
@@ -368,7 +371,10 @@ fn work_groth(
     let start = Instant::now();
 
     if let Some(is_valid) = instance.verify_proof(&proof, &pvk) {
-        assert!(is_valid, "failed to verify proof");
+        //assert!(is_valid, "failed to verify proof");
+        info!("verify_proof : failed");
+    } else {
+        info!("verify_proof : success");
     }
 
     total_verifying += start.elapsed();
@@ -385,21 +391,24 @@ fn work_groth(
         + (verifying_avg.as_secs() as f64);
 
     //info!(SP_LOG, "avg_proving_time: {:?} seconds", proving_avg; "target" => "stats");
-    //info!(SP_LOG, "avg_verifying_time: {:?} seconds", verifying_avg; "target" => "stats");
-    //info!(SP_LOG, "params_generation_time: {:?}", param_duration; "target" => "stats");
+    info!("avg_proving_time: {} seconds", proving_avg);
+    info!("avg_verifying_time: {:?} seconds", verifying_avg);
+    info!( "params_generation_time: {:?}", param_duration);
 }
 
 fn merkel_path(
 	data: Vec<u64>,
 ) -> (Vec<Option<(Fr, bool)>>, Fr, Fr, usize) {
-	let challenge_leaf_index = 3;
+    let challenge_leaf_index = 3;
+    info!( "challenge_leaf_index {}", challenge_leaf_index);
 	let leaves: Vec<Fr> = data.iter().map(|x| (Fr::from_repr(FrRepr::from(*x as u64))).unwrap()).collect();
 	let tree_depth = (leaves.len() as f64).log2().ceil() as usize;
-	//let leaf = leaves[challenge_leaf_index];
+    //let leaf = leaves[challenge_leaf_index];
+    info!( "MerkleTree from_data tree_depth={}", tree_depth);
 	let merk_tree = MerkleTree::<PedersenDomain, PedersenFunction>::from_data(leaves);
 
     // generate merkle path for challenged node and parents
-
+    info!( "merk_proof auth_path");
     let merk_proof =  MerkleProof::<PedersenHasher>::new_from_proof(&merk_tree.gen_proof(challenge_leaf_index));
     let auth_path = merk_proof.as_options();
 	let root : Fr  = merk_tree.root().into();
@@ -410,7 +419,17 @@ fn merkel_path(
 
 
 pub fn create_proof(data: Vec<u64>) {
+    env_logger::init();
+
+    info!( "MerklePorApp::default(");
     let instance = MerklePorApp::default();
-	let (auth_path, leaf, root, tree_depth) = merkel_path(data);
+    info!( "merkel_path");
+    let start = Instant::now();
+    let (auth_path, leaf, root, tree_depth) = merkel_path(data);
+    let merkle_creation_duration = start.elapsed();
+    let merkle_creation_duration = f64::from(merkle_creation_duration.subsec_nanos()) / 1_000_000_000f64
+        + (merkle_creation_duration.as_secs() as f64);
+    info!( "merkle_creation_duration {}", merkle_creation_duration);
+    info!( "work_groth");
 	work_groth(instance, tree_depth, auth_path.clone(), leaf, root);
 }
