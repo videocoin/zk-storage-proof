@@ -311,6 +311,7 @@ pub fn main()
                         val
                     }));
 
+                    // Extend with dummy data
                     vals_with_scratch.extend(frame_f.iter().map(|&val| {
                         val
                     }));

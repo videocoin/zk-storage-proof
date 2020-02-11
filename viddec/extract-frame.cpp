@@ -29,7 +29,7 @@ AVFormatContext* fmt_ctx;
 int frame_offset = 0;
 int macroblock_offset = 0;
 int fScale = 0;
-int region_width = 16;
+int region_width = 32;
 //int region_height = 16;
 const char *output_file = "test.json";
 const char* input_file;
@@ -82,12 +82,11 @@ void parse_options(int argc, const char* argv[])
 			if(i+1 < argc)
 				region_width = atoi(argv[i+1]);;
 		} 
-		
 		i++;
 	}
 	if(ARG_HELP || input_file == NULL)
 	{
-		fprintf(stderr, "Usage: gen-hash [--frame <frame number>] [--count <num frames>] --scale --input videoPath --output outfile.json\n");
+		fprintf(stderr, "Usage: gen-hash [--frame <frame start>] [--count <num frames>] --scale --input videoPath --output outfile.json\n");
 		exit(1);
 	}
 }

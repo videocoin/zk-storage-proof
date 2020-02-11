@@ -129,8 +129,12 @@ fn get_input_mb(input_file: String) -> Vec<u32>
 	let mut file = File::open(input_file).expect("verify: faild to open input_file file");
 	let mut data = String::new();
 	file.read_to_string(&mut data).expect("verify: faild to read witness file");
-	let sample_mb: SampleMb = json::decode(&data).unwrap();
-	let pixels =  sample_mb.pixels.iter().map(|x| *x as u32).collect();
+
+	//let sample_mb: SampleMb = json::decode(&data).unwrap();
+	//let pixels =  sample_mb.pixels.iter().map(|x| *x as u32).collect();
+
+	let frames:  Vec<SampleMb> = json::decode(&data).unwrap();
+	let pixels =  frames[0].pixels.iter().map(|x| *x as u32).collect();
 	pixels
 }
 
