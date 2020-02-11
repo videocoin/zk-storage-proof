@@ -14,6 +14,13 @@ use transpose::transpose;
 
 use std::sync::Arc;
 use rand::Rng;
+extern crate rustc_serialize;
+use rustc_serialize::json::Json;
+use rustc_serialize::json;
+use std::env;
+use std::fs::File;
+use std::io::Read;
+use std::process;
 
 const HASH_WIDTH: u32 = 8;
 const HASH_HEIGHT: u32 = 8;
@@ -21,6 +28,13 @@ const HASH_HEIGHT: u32 = 8;
 // we perform the DCT on an enlarged image
 const DCT_WIDTH: u32 = 32;
 const DCT_HEIGHT: u32 = 32;
+
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Clone)]
+#[derive(Default)]
+pub struct SampleFrame {
+	pixels: Vec<u32>,
+}
 
 pub struct DctCtxt {
     row_dct: Arc<dyn TransformType2And3<f32>>,
@@ -257,9 +271,65 @@ fn test_dct_2d() {
     println!("dct len={} {:?}", dct_vals.len(), dct_vals);
 }
 
+fn gen_phash_multiple_frames_from_file(
+	input_path: String) -> Vec<SampleFrame> 
+{	
+	let mut file = File::open(input_path).expect("verify: faild to open input_file");
+
+	let mut data = String::new();
+	file.read_to_string(&mut data).expect("verify: faild to read witness file");
+    let frames:  Vec<SampleFrame> = json::decode(&data).unwrap();
+    frames
+}
+
 pub fn main()
 {
- 
+    let args: Vec<String> = env::args().collect();
+	println!("{:?}", args);
+	let mut cmd: String = "None".to_string();
+	if args.len() > 1 {
+    	cmd = args[1].clone();
+	}
+	match cmd.as_ref() {
+		"file" => {
+			println!("file");
+			if args.len() >= 3 {
+                let input_file = args[2].clone();
+                let output_file = args[2].clone();
+                let frames = gen_phash_multiple_frames_from_file(input_file);
+                for frame in frames {
+                    let frame_f: Vec<f32>  = frame.pixels.iter().map(|x| *x as f32).collect();
+                    //println!("frame={:?}", frame_f);
+                    let dct_width: u32 = DCT_WIDTH;
+                    let dct_height: u32 = DCT_HEIGHT;
+                    let input_len: usize = (dct_width * dct_height) as usize;
+
+                    let ctx = DctCtxt::new(dct_width as usize, dct_height as usize);
+                
+                    let mut vals_with_scratch = Vec::with_capacity(input_len * 2);
+                    vals_with_scratch.extend(frame_f.iter().map(|&val| {
+                        val
+                    }));
+
+                    vals_with_scratch.extend(frame_f.iter().map(|&val| {
+                        val
+                    }));
+
+                    let dct_vals = ctx.dct_2d(vals_with_scratch);
+                    //println!("dct len={} {:?}", dct_vals.len(), dct_vals);
+                    let cropped_dct =crop_2d_dct(dct_vals, DCT_WIDTH as usize, 4);
+                    //println!("cropped dct: len={} {:?}", cropped_dct.len(), cropped_dct);
+                    let hash: Vec<u8> = BitSet::from_bools(mean_hash_f32(&cropped_dct));
+                    println!("hash: len={} {:?}", hash.len(), hash);
+                }
+			} else {
+				println!("rust-phash input_file output_file");
+				process::exit(1);
+			}			
+        },
+		_ => println!("Unknown command\n "),
+	}        
+ /*
     let mut rng = rand::thread_rng();
     let dct_width: u32 = DCT_WIDTH;
     let dct_height: u32 = DCT_HEIGHT;
@@ -280,4 +350,5 @@ pub fn main()
     println!("cropped dct: len={} {:?}", cropped_dct.len(), cropped_dct);
     let hash: Vec<u8> = BitSet::from_bools(mean_hash_f32(&cropped_dct));
     println!("hash: len={} {:?}", hash.len(), hash);
+ */ 
 }

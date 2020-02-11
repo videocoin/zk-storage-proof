@@ -1,28 +1,3 @@
-/*
- * Copyright (c) 2015 Ludmila Glinskih
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
-/**
- * H264 codec test.
- */
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -55,7 +30,7 @@ int frame_offset = 0;
 int macroblock_offset = 0;
 int fScale = 0;
 int region_width = 16;
-int region_height = 16;
+//int region_height = 16;
 const char *output_file = "test.json";
 const char* input_file;
 
@@ -65,8 +40,6 @@ AVBitStreamFilterContext* h264bsfc = NULL;
 static long privateId = 0;
 AVDictionary *frameDict = NULL;
 
-bool ARG_QUIET, ARG_HELP;
-
 void parse_options(int argc, const char* argv[]);
 void hexDump (unsigned char *pData, int n);
 static char* itoa(int val, int base);
@@ -75,15 +48,15 @@ int extractLuma(AVFrame *frame, unsigned char *pRawY, int x , int y, int width, 
 
 char *mb_data = NULL;
 int mb_size = 0;
+int gFrameCount = 1;
+int ARG_HELP = false;
+
 void parse_options(int argc, const char* argv[])
 {
 	int i = 1;
-	while(i < argc)
-	{
+	while(i < argc) {
 		if(strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0)
 			ARG_HELP = true;
-		else if(strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0)
-			ARG_QUIET = true;
 		else if(strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--frame") == 0) {
 			if(i+1 < argc)
 				frame_offset = atoi(argv[i+1]);
@@ -102,12 +75,19 @@ void parse_options(int argc, const char* argv[])
 			i++;
 		}  else if(strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--scale") == 0) {
 			fScale = 1;
-		}
+		}  else if(strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--count") == 0) {
+			if(i+1 < argc)
+				gFrameCount = atoi(argv[i+1]);;
+		}  else if(strcmp(argv[i], "-w") == 0 || strcmp(argv[i], "--width") == 0) {
+			if(i+1 < argc)
+				region_width = atoi(argv[i+1]);;
+		} 
+		
 		i++;
 	}
 	if(ARG_HELP || input_file == NULL)
 	{
-		fprintf(stderr, "Usage: gen-hash [--frame <frame number>] [--macroblock <macroblock number>] --scale --input videoPath --output outfile.json\n  --help and -h will output this help message.\n   --frame frame offset.\n  --macroblock macroblock offset.\n");
+		fprintf(stderr, "Usage: gen-hash [--frame <frame number>] [--count <num frames>] --scale --input videoPath --output outfile.json\n");
 		exit(1);
 	}
 }
@@ -243,9 +223,7 @@ int main(int argc, char **argv)
         av_log(NULL, AV_LOG_ERROR, "Incorrect input\n");
         return 1;
     }
-
-    //if (video_decode_example(argv[1]) != 0)
-    //    return 1;
+;
     AVCodec *codec = avcodec_find_decoder(AV_CODEC_ID_H264);
     if (!codec) {
     	fprintf(stderr, "Codec not found\n");
@@ -306,8 +284,12 @@ int main(int argc, char **argv)
 	if(ffmpeg_videoStreamIndex == -1){
 		fprintf(stderr, "Video stream not found.");
 	}
-	unsigned char *pRawY = (unsigned char *)malloc(region_width * region_height);
+	unsigned char *pRawY = (unsigned char *)malloc(region_width * region_width);
 	int extracted = 0;
+
+	JSON FrameObjects;
+	std::ofstream outfile(output_file);
+	int extracted_frames = 0;
 	while(av_read_frame(fmt_ctx, pkt) >= 0) {
 		if (pkt && pkt->size && ffmpeg_videoStreamIndex == pkt->stream_index) {
 			if (h264bsfc) {
@@ -328,10 +310,20 @@ int main(int argc, char **argv)
 					exit(1);
 				} else if (got_frame){
 					fprintf(stderr, "Frame decoded\n");
-					if(frame_count == frame_offset) {
-						extractLuma(codec_ctx, frame, pRawY, 0, 0, region_width, region_height);
+					if(frame_count >= frame_offset) {
+						extractLuma(codec_ctx, frame, pRawY, 0, 0, region_width, region_width);
 						extracted = 1;
-						break;
+
+						JSON array;
+						json::JSON obj;
+						for (int i = 0; i < region_width * region_width; i++) {
+							array[i] = pRawY[i];
+						}
+						obj["pixels"] = array;
+						FrameObjects.append(obj);
+						extracted_frames++;
+						if(extracted_frames >= gFrameCount)
+							break;
 					}
 					frame_count++;
 				}
@@ -340,15 +332,8 @@ int main(int argc, char **argv)
 	    av_packet_unref(pkt);
 	}
 	if(extracted) {
-		json::JSON obj;
-		JSON array;
-		std::ofstream outfile(output_file);
-		for (int i = 0; i < region_width * region_height; i++) {
-			array[i] = pRawY[i];
-		}
-		obj["pixels"] = array;
-		cout << obj << endl;
-		outfile << obj << endl;
+		cout << FrameObjects << endl;
+		outfile << FrameObjects << endl;				
 	}
 
 	free(mb_data);
