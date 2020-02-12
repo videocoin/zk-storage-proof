@@ -22,6 +22,8 @@ use rand::thread_rng;
 use storage_proofs::hasher::pedersen::{PedersenDomain, PedersenFunction, PedersenHasher};
 use storage_proofs::merkle::{MerkleProof, MerkleTree};
 
+use std::io::{self, Read, Write};
+
 use std::fs::File;
 use std::io::stderr;
 use std::path::Path;
@@ -39,6 +41,7 @@ use super::constraint;
 use log::{info, trace, warn};
 extern crate env_logger;
 use std::process;
+const TREE_DEPTH: usize = 9;
 
 //lazy_static! {
 //    pub static ref SP_LOG: Logger = make_logger("storage-proofs");
@@ -200,13 +203,17 @@ pub trait PorApi<'a, C: Circuit<Bls12>>: Default {
 
     /// Verify the given proof, return `None` if not implemented.
     fn verify_proof(&mut self, _: &Proof<Bls12>, _: &PreparedVerifyingKey<Bls12>) -> Option<bool>;
+
+    fn dump(&mut self);
+    fn write<W: Write>(&self, mut writer: W) -> io::Result<()>;
+    fn read<R: Read>(mut reader: R) -> io::Result<Self>;
 }
 
 
 pub struct MerklePorApp {
-    auth_path: Vec<Option<(Fr, bool)>>,
-    root: Fr,
-    leaf: Fr,
+    pub auth_path: Vec<Option<(Fr, bool)>>,
+    pub root: Fr,
+    pub leaf: Fr,
 }
 
 impl Default for MerklePorApp {
@@ -295,6 +302,31 @@ impl<'a> PorApi<'a, ProofOfRetrievability<'a, Bls12>> for MerklePorApp {
 
         // -- verify proof with public inputs
         Some(verify_proof(pvk, proof, &expected_inputs).expect("failed to verify proof"))
+    }
+
+    fn dump(&mut self)
+    {
+        println!("leaf {:?}", self.leaf);
+        println!("root {:?}", self.root);
+        for p in self.auth_path.clone() {
+            let node = p.unwrap();
+            println!("node {:?} {:?}", node.0, node.1);
+        };
+    }
+
+    fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
+        //writer.write_all(self.a.into_compressed().as_ref())?;
+        //writer.write_all(self.b.into_compressed().as_ref())?;
+        //writer.write_all(self.c.into_compressed().as_ref())?;
+
+        Ok(())
+    }
+    fn read<R: Read>(mut reader: R) -> io::Result<Self>
+    {
+        let auth_path: Vec<Option<(Fr, bool)>> = vec![None; TREE_DEPTH];
+        let root: Fr = Fr::from_repr(FrRepr::from(0 as u64)).unwrap();
+        let leaf: Fr = Fr::from_repr(FrRepr::from(0 as u64)).unwrap();;
+        Ok(MerklePorApp { auth_path: auth_path, leaf: leaf, root: root })
     }
 }
 

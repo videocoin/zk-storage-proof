@@ -23,6 +23,7 @@ extern crate rustc_serialize;
 
 use rand::{Rng, SeedableRng, XorShiftRng};
 use ff::{Field, PrimeField, PrimeFieldDecodingError, PrimeFieldRepr};
+use std::str;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::Read;
@@ -75,6 +76,8 @@ pub struct PorWitness {
 	root: Fr,
 }
 */
+
+
 
 fn merkel_path(
 	data: Vec<u64>,
@@ -320,12 +323,36 @@ fn porgenproof(
 	let mut witness_f = File::create(witness_path).expect("failed to create witness file");
 	witness_f.write(leaf.to_string().as_bytes());
 	witness_f.write(root.to_string().as_bytes());
-	/*
-	auth_path.iter().map(|Some(node, leftright)|{
-
-	});
-	*/
+	por.dump();
 	println!("Load CRS + Proof generation {}", now.elapsed().as_millis());
+}
+
+fn porverify(crs_path: String, proof_path: String, witness_path: String,)
+{
+	let now = Instant::now();	
+
+	let witness_path = Path::new(&crs_path);
+	
+	let mut witness_f = File::open(&witness_path).expect("faild to open ssim_proof.dat file");
+	
+	// Read witness
+	let mut por: merkle_pot::MerklePorApp = merkle_pot::MerklePorApp::read(&mut witness_f).expect("failed to read witness data");
+
+    let groth_params: Parameters<Bls12> = {
+		let f = File::open(&crs_path).expect("failed to open crs file");
+		Parameters::read(&f, false).expect("failed to read crs file")
+	};
+			
+	let mut f = File::open(&proof_path).expect("faild to open por_proof.dat file");
+	let proof: Proof<Bls12> = Proof::read(&mut f).expect("failed to read proof to file ssim_proof.dat");
+	
+	let pvk = prepare_verifying_key(&groth_params.vk);
+
+	let verify_start = Instant::now();	
+	let res = por.verify_proof(&proof, &pvk).unwrap();
+	println!("Verificaiton result = {:?}", res);
+	println!("Only Verification {}", verify_start.elapsed().as_millis());	
+	println!("Load Proof+Verification {}", now.elapsed().as_millis());	
 }
 
 fn main()
@@ -405,7 +432,7 @@ fn main()
     			let crs_file = args[2].clone();
 				let proof_file = args[3].clone();
 				let witness_file = args[4].clone();
-				verify(crs_file, proof_file, witness_file)
+				porverify(crs_file, proof_file, witness_file)
 			} else {
 				println!("zkptrans porverify crs_file proof_file witness_file");
 				process::exit(1);
