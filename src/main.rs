@@ -32,6 +32,7 @@ use std::time::{Duration, Instant};
 use std::process;
 use rustc_serialize::json::Json;
 use rustc_serialize::json;
+use fil_sapling_crypto::jubjub::{JubjubBls12, JubjubEngine, edwards::Point};
 
 //mod macroblock;
 mod pixel;
@@ -46,6 +47,7 @@ use storage_proofs::hasher::pedersen::{PedersenDomain, PedersenFunction, Pederse
 use storage_proofs::merkle::{MerkleProof, MerkleTree};
 use bellperson::groth16::{Parameters, prepare_verifying_key, Proof};
 use mb_ssim::SsimApi;
+use merkle_pot::PorApi;
 
 use storage_proofs::hasher::{Sha256Hasher, Domain, Hasher};
 
@@ -55,6 +57,24 @@ use storage_proofs::hasher::{Sha256Hasher, Domain, Hasher};
 pub struct SampleMb {
 	pixels: Vec<u16>,
 }
+
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Clone)]
+#[derive(Default)]
+pub struct PHashes {
+	phashes: Vec<u64>,
+}
+
+/*
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Clone)]
+#[derive(Default)]
+pub struct PorWitness {
+	auth_path: Vec<(Fr, bool)>,
+	leaf: Fr, 
+	root: Fr,
+}
+*/
 
 fn merkel_path(
 	data: Vec<u64>,
@@ -238,6 +258,76 @@ fn gensample(mb_size: u32, sample1_file: String, sample2_file: String)
 	input2_f.write_all(sample2_encoded.as_bytes());	
 }
 
+lazy_static! {
+    static ref JUBJUB_BLS_PARAMS: JubjubBls12 = JubjubBls12::new();
+}
+
+fn porsetup(crs_path: String)
+{	
+	let now = Instant::now();
+	let mut rng = rand::thread_rng();
+	let mut por = merkle_pot::MerklePorApp::default();
+
+	let p = por.generate_groth_params(&mut rng, &JUBJUB_BLS_PARAMS, 9);
+	let mut f = File::create(&crs_path).expect("faild to open ssim_crs.dat file");
+	p.write(&mut f).expect("failed to write params to ssim_crs.dat");
+	println!("Setup {}", now.elapsed().as_millis());
+}
+
+fn get_input_phash(input_file: String) -> Vec<u64>
+{
+	let mut file = File::open(input_file).expect("verify: faild to open phashes file");
+	let mut data = String::new();
+	file.read_to_string(&mut data).expect("verify: faild to read phashes file");
+
+	let phashes_in:  PHashes = json::decode(&data).unwrap();
+	let phashes =  phashes_in.phashes.iter().map(|x| *x as u64).collect();
+	println!("phashes={:?}", phashes);
+	phashes
+}
+
+fn porgenproof(
+	crs_path: String, 
+	proof_path: String, 
+	input_path: String, 
+	witness_path: String,)
+{	
+	let now = Instant::now();
+
+    let file_path = Path::new(&crs_path);
+
+	let mut por = merkle_pot::MerklePorApp::default();
+    let groth_params: Parameters<Bls12> = {
+		let f = File::open(&crs_path).expect("failed to open crs file");
+		Parameters::read(&f, false).expect("failed to read crs file")
+	};
+	
+	// data
+	let data: Vec<u64> = get_input_phash(input_path);
+	let (auth_path, leaf, root, tree_depth) = merkle_pot::merkel_path(data);
+		
+	let proof_start = Instant::now();	
+	
+	let mut rng = rand::thread_rng();
+	let proof = por.create_proof(&mut rng, &JUBJUB_BLS_PARAMS, &groth_params, auth_path.clone(), leaf, root);
+	println!("Proof generation {}", now.elapsed().as_millis());
+	
+	// save proof to file
+	let mut proof_f = File::create(&proof_path).expect("faild to create proof file");
+	proof.write(&mut proof_f).expect("failed to serialize proof file");
+	
+	// Save witness
+	let mut witness_f = File::create(witness_path).expect("failed to create witness file");
+	witness_f.write(leaf.to_string().as_bytes());
+	witness_f.write(root.to_string().as_bytes());
+	/*
+	auth_path.iter().map(|Some(node, leftright)|{
+
+	});
+	*/
+	println!("Load CRS + Proof generation {}", now.elapsed().as_millis());
+}
+
 fn main()
 {
 	let args: Vec<String> = env::args().collect();
@@ -285,6 +375,42 @@ fn main()
 				process::exit(1);
 			}
 		},
+		"porsetup" => {
+			println!("porsetup");
+			if args.len() >= 3 {
+    			let crs_file = args[2].clone();
+				porsetup(crs_file)
+			} else {
+				println!("zkptrans porsetup crs_file");
+				process::exit(1);
+			}			
+		},
+		"porgenproof" => {
+			println!("porgenproof");
+			if args.len() >= 6 {
+    			let crs_file = args[2].clone();
+				let proof_file = args[3].clone();
+				let input_file = args[4].clone();
+				let witness_file = args[5].clone();
+				porgenproof(crs_file, proof_file, input_file, witness_file)
+			} else {
+				println!("zkptrans porgenproof crs_file proof_file input_file witness_file");
+				process::exit(1);
+			}
+
+		},
+		"porverify" => {
+			println!("porverify");
+			if args.len() >= 5 {
+    			let crs_file = args[2].clone();
+				let proof_file = args[3].clone();
+				let witness_file = args[4].clone();
+				verify(crs_file, proof_file, witness_file)
+			} else {
+				println!("zkptrans porverify crs_file proof_file witness_file");
+				process::exit(1);
+			}
+		},		
 		"gensample" => {
 			println!("gensample");
 			if args.len() >= 4 {

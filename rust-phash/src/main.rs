@@ -18,6 +18,7 @@ extern crate rustc_serialize;
 use rustc_serialize::json::Json;
 use rustc_serialize::json;
 use std::env;
+use std::io::prelude::*;
 use std::fs::File;
 use std::io::Read;
 use std::process;
@@ -34,6 +35,13 @@ const DCT_HEIGHT: u32 = 32;
 #[derive(Default)]
 pub struct SampleFrame {
 	pixels: Vec<u32>,
+}
+
+#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Clone)]
+#[derive(Default)]
+pub struct PHashes {
+	phashes: Vec<u64>,
 }
 
 pub struct DctCtxt {
@@ -295,8 +303,9 @@ pub fn main()
 			println!("file");
 			if args.len() >= 3 {
                 let input_file = args[2].clone();
-                let output_file = args[2].clone();
+                let output_file = args[3].clone();
                 let frames = gen_phash_multiple_frames_from_file(input_file);
+                let mut phashes: Vec<u64> = Vec::new();
                 for frame in frames {
                     let frame_f: Vec<f32>  = frame.pixels.iter().map(|x| *x as f32).collect();
                     //println!("frame={:?}", frame_f);
@@ -322,7 +331,21 @@ pub fn main()
                     //println!("cropped dct: len={} {:?}", cropped_dct.len(), cropped_dct);
                     let hash: Vec<u8> = BitSet::from_bools(mean_hash_f32(&cropped_dct));
                     println!("hash: len={} {:?}", hash.len(), hash);
+
+                    let phash64 = unsafe { std::mem::transmute::<[u8; 8], u64>([hash[0],hash[1],hash[2],hash[3],hash[4],hash[5],hash[6],hash[7]]) }.to_le();
+
+                    phashes.push(phash64);
                 }
+                
+                if(phashes.len() > 0) {
+                    let phashes_out = PHashes {
+                        phashes: phashes,
+                    };
+                    let mut phashes_f = File::create(&output_file).expect("faild to create output file");
+                    let phashes_encoded = json::encode(&phashes_out).unwrap();
+                    phashes_f.write_all(phashes_encoded.as_bytes());
+                }
+
 			} else {
 				println!("rust-phash input_file output_file");
 				process::exit(1);

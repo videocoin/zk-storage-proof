@@ -203,7 +203,7 @@ pub trait PorApi<'a, C: Circuit<Bls12>>: Default {
 }
 
 
-struct MerklePorApp {
+pub struct MerklePorApp {
     auth_path: Vec<Option<(Fr, bool)>>,
     root: Fr,
     leaf: Fr,
@@ -396,7 +396,7 @@ fn work_groth(
     info!( "params_generation_time: {:?}", param_duration);
 }
 
-fn merkel_path(
+pub fn merkel_path(
 	data: Vec<u64>,
 ) -> (Vec<Option<(Fr, bool)>>, Fr, Fr, usize) {
     let challenge_leaf_index = 3;
