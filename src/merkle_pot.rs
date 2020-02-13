@@ -39,6 +39,10 @@ use pbr::ProgressBar;
 use slog::Logger;
 use super::constraint;
 use log::{info, trace, warn};
+
+use rustc_serialize::json::Json;
+use rustc_serialize::json;
+
 extern crate env_logger;
 use std::process;
 const TREE_DEPTH: usize = 9;
@@ -209,7 +213,8 @@ pub trait PorApi<'a, C: Circuit<Bls12>>: Default {
     fn read<R: Read>(mut reader: R) -> io::Result<Self>;
 }
 
-
+//#[derive(RustcDecodable, RustcEncodable)]
+//#[derive(Clone)]
 pub struct MerklePorApp {
     pub auth_path: Vec<Option<(Fr, bool)>>,
     pub root: Fr,
@@ -315,9 +320,17 @@ impl<'a> PorApi<'a, ProofOfRetrievability<'a, Bls12>> for MerklePorApp {
     }
 
     fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        //writer.write_all(self.a.into_compressed().as_ref())?;
-        //writer.write_all(self.b.into_compressed().as_ref())?;
-        //writer.write_all(self.c.into_compressed().as_ref())?;
+        write!(&mut writer, "leaf {:?}\n", self.leaf);
+        //let mut leaf_frrepr: FrRepr = FrRepr::from(self.leaf);
+        //let raw: &[u64] = leaf_frrepr.as_mut();
+        
+        //let witness_encoded = json::encode(&self).unwrap();
+        write!(&mut writer, "raw leaf {:?}\n", FrRepr::from(self.leaf).as_mut());
+        write!(&mut writer, "root {:?}\n", self.root);
+        for p in self.auth_path.clone() {
+            let node = p.unwrap();
+            write!(&mut writer, "node {:?} {:?}\n", node.0, node.1);
+        };
 
         Ok(())
     }

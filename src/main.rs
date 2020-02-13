@@ -321,8 +321,7 @@ fn porgenproof(
 	
 	// Save witness
 	let mut witness_f = File::create(witness_path).expect("failed to create witness file");
-	witness_f.write(leaf.to_string().as_bytes());
-	witness_f.write(root.to_string().as_bytes());
+	por.write(witness_f);
 	por.dump();
 	println!("Load CRS + Proof generation {}", now.elapsed().as_millis());
 }
