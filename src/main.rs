@@ -45,12 +45,14 @@ use paired::bls12_381::{Bls12, Fr, FrRepr};
 
 // For Testing
 use storage_proofs::hasher::pedersen::{PedersenDomain, PedersenFunction, PedersenHasher};
-use storage_proofs::merkle::{MerkleProof, MerkleTree};
+use storage_proofs::merkle::{MerkleProof, MerkleTree, make_proof_for_test};
 use bellperson::groth16::{Parameters, prepare_verifying_key, Proof};
 use mb_ssim::SsimApi;
 use merkle_pot::PorApi;
 
 use storage_proofs::hasher::{Sha256Hasher, Domain, Hasher};
+use serde::{Deserialize, Serialize};
+use serde_json::Result;
 
 #[derive(RustcDecodable, RustcEncodable)]
 #[derive(Clone)]
@@ -66,45 +68,100 @@ pub struct PHashes {
 	phashes: Vec<u64>,
 }
 
-/*
-#[derive(RustcDecodable, RustcEncodable)]
-#[derive(Clone)]
-#[derive(Default)]
-pub struct PorWitness {
-	auth_path: Vec<(Fr, bool)>,
-	leaf: Fr, 
-	root: Fr,
-}
-*/
+//#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+//pub struct PedersenDomain(pub FrRepr);
 
-
-
-fn merkel_path(
-	data: Vec<u64>,
-) -> (Vec<Option<(Fr, bool)>>, Fr, Fr, usize) {
-	let challenge_leaf_index = 3;
+fn merkel_path_commit(
+	data: Vec<u64>
+) -> Fr {
 	let leaves: Vec<Fr> = data.iter().map(|x| (Fr::from_repr(FrRepr::from(*x as u64))).unwrap()).collect();
-	let tree_depth = (leaves.len() as f64).log2().ceil() as usize;
-	let leaf = leaves[challenge_leaf_index];
+	let merk_tree = MerkleTree::<PedersenDomain, PedersenFunction>::from_data(leaves);
+
+	let root : Fr  = merk_tree.root().into();
+	
+	println!("root: {:?}", root);
+
+	root
+}
+
+fn merkel_path_proof(
+	data: Vec<u64>,
+	challenge: usize
+) -> (Fr, Fr, Vec<Option<(Fr, bool)>>) {
+	let leaves: Vec<Fr> = data.iter().map(|x| (Fr::from_repr(FrRepr::from(*x as u64))).unwrap()).collect();
 	let merk_tree = MerkleTree::<PedersenDomain, PedersenFunction>::from_data(leaves);
 
 	// generate merkle path for challenged node and parents
 	println!("======================================================================");
-	println!("{:?}", merk_tree);
-	println!("hash of uncle {:?}", merk_tree.read_at(2));
-	println!("hash of leaf {:?}", merk_tree.read_at(3));
-    let merk_proof =  MerkleProof::<PedersenHasher>::new_from_proof(&merk_tree.gen_proof(challenge_leaf_index));
-	println!("merkel_proof {:?}", merk_proof);    
+	println!("merk_tree={:?}\n\n", merk_tree);
+	println!("hash of uncle: {:?}", merk_tree.read_at(2));
+	let leaf = Fr::from(merk_tree.read_at(challenge));
+
+    let merk_proof =  MerkleProof::<PedersenHasher>::new_from_proof(&merk_tree.gen_proof(challenge));
+	println!("merkel_proof: {:?}", merk_proof);    
 	let auth_path = merk_proof.as_options();
 	let root : Fr  = merk_tree.root().into();
 	
-	println!("leaf {:?}", leaf);
-	println!("root {:?}", root);
+	println!("leaf value: {:?}", leaf);
+	println!("root: {:?}", root);
 	for item in auth_path.clone() {
 		println!("{:?}", item);
 	}
 
-	(auth_path, leaf, root, tree_depth)
+	(root, leaf, auth_path)
+}
+
+#[derive(Serialize, Deserialize)]
+struct VcMerkleProof {
+    leaf: PedersenDomain,
+	root: PedersenDomain,
+	auth_path: Vec<Option<(PedersenDomain, bool)>>
+}
+
+fn save_merkle_proof(proof_file: String, root: Fr, leaf: Fr, auth_path: Vec<Option<(Fr, bool)>>)
+{
+	let file_path = Path::new(&proof_file);
+	let mut proof = VcMerkleProof{
+		leaf: PedersenDomain(FrRepr::from(leaf)),
+		root: PedersenDomain(FrRepr::from(root)),
+		auth_path: vec![],
+	};
+
+	for node in auth_path {
+		let item  = node.unwrap();
+		proof.auth_path.push(Some((PedersenDomain(FrRepr::from(item.0)), item.1)));
+	}
+
+	let ser = serde_json::to_string(&proof).unwrap();
+
+    let mut proof_f = File::create(&file_path).expect("faild to create proof file");
+	proof_f.write_all(ser.as_bytes());		
+}
+
+fn load_merkle_proof(proof_file: String) -> ( PedersenDomain, PedersenDomain, Vec<(PedersenDomain, bool)>)
+{
+	let file_path = Path::new(&proof_file);
+	let mut proof_f = File::open(&file_path).expect("faild to create proof file");
+	let mut data = String::new();
+	proof_f.read_to_string(&mut data);
+	let proof: VcMerkleProof = serde_json::from_str(&data).unwrap();
+	println!("proof={:?}", data);
+
+	//let auth_path: Vec<Option<(Fr, bool)>> = vec![];
+	let mut auth_path: Vec<(PedersenDomain, bool)> = vec![];
+	let leaf: PedersenDomain = proof.leaf;
+	let root: PedersenDomain = proof.root;
+
+	for node in proof.auth_path {
+		let item = node.unwrap();
+		auth_path.push((item.0, item.1));
+	}
+	println!("leaf: {:?}", leaf);
+	println!("root: {:?}", root);
+	for item in auth_path.clone() {
+		println!("{:?}", item);
+	}
+	(root, leaf, auth_path)
 }
 
 
@@ -448,16 +505,63 @@ fn main()
 				process::exit(1);
 			}
 		},
-		"por" => {
-			let mut data:Vec<u64> = Vec::new();
-			for i in 0..512 {
-				data.push(i);
-			}
-			let (auth_path, leaf, root, tree_depth) = merkel_path(data);
-		
-			let end = 0;
-		
+		"porpedercommit" => {
+			println!("porpedercommit");
+			if args.len() >= 3 {
+				let mut data:Vec<u64> = Vec::new();
+				let input_file = args[2].clone();
+				if(input_file == "random") {
+					for i in 0..512 {
+						data.push(i);
+					}
+				} else {
+					data = get_input_phash(input_file);
+				}
+				let root = merkel_path_commit(data);
+				//save_merkle_proof(proof_file, root, leaf, auth_path);
+			} else {
+				println!("zkptrans porpeder porpedercommit input_file");
+				process::exit(1);
+			}			
+		},			
+		"porpedergenproof" => {
+			println!("porpedergenproof");
+			if args.len() >= 5 {
+				let mut data:Vec<u64> = Vec::new();
+
+				let end = 0;
+				let proof_file = args[2].clone();
+				let input_file = args[3].clone();
+				let challenge = args[4].clone().parse::<usize>().unwrap();
+				if(input_file == "random") {
+					for i in 0..512 {
+						data.push(i);
+					}
+				} else {
+					data = get_input_phash(input_file);
+				}
+				let (root, leaf, auth_path, ) = merkel_path_proof(data, challenge);
+				save_merkle_proof(proof_file, root, leaf, auth_path);
+			} else {
+				println!("zkptrans porpeder proof_file input_file challenge_index");
+				process::exit(1);
+			}			
 		},	
+		"porpederverify" => {
+			println!("porpederverify");
+			if args.len() >= 4 {
+				let end = 0;
+				let proof_file = args[2].clone();
+				let challenge = args[3].clone().parse::<usize>().unwrap();;
+				let (root, leaf, auth_path) = load_merkle_proof(proof_file);
+				let proof: MerkleProof<PedersenHasher>  = make_proof_for_test(root, leaf, auth_path);
+				let res = proof.validate(challenge);
+				println!("Verification Result={:?}", res);
+			} else {
+				println!("zkptrans porpeder proof_file input_file");
+				process::exit(1);
+			}			
+		},			
 		"porsha256" => {
 			let mut data:Vec<u64> = Vec::new();
 			for i in 0..512 {
@@ -466,7 +570,6 @@ fn main()
 			let (auth_path, leaf, root, tree_depth) = merkel_path_sha256(data);
 		
 			let end = 0;
-		
 		},			
 		"zkpor" => {
 			let mut data:Vec<u64> = Vec::new();
@@ -479,42 +582,4 @@ fn main()
 		},			
 		_ => println!("Unknown command\n "),
 	}
-	//let src_mb: Vec<u32> = (0..256).map(|x| x).collect();
-	//let dst_mb: Vec<u32> = (0..256).map(|x| x).collect();
-	let mb_size = 256;
-	let mut rng = rand::thread_rng();
-	let src_mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
-	let dst_mb: Vec<u32> = (0..mb_size).map(|x| (rng.gen::<u8>()) as u32).collect();
-	
-	//let _witns: mb_ssim::Witness = Default::default();		
-	let witns = mb_ssim::gen_witness(&src_mb.clone(), &dst_mb.clone());
-/*		
-	mb_ssim::ssim_circuit_proof_verify(src_mb, dst_mb, witns);
-*/
-
-	
-	let mut ssim= mb_ssim::SsimApp::default();
-/*
-	let p = ssim.setup(src_mb, dst_mb, witns);
-
-	let mut f = File::create(&crs_path).expect("faild to open ssim_crs.dat file");
-	p.write(&mut f).expect("failed to write params to ssim_crs.dat");
-*/
-/*
-	let mut data:Vec<u64> = Vec::new();
-	for i in 0..512 {
-    	data.push(i);
-	}
-	let (auth_path, leaf, root, tree_depth) = merkel_path(data);
-
-	let end = 0;
-		
-*/
-/*
-	let mut data:Vec<u64> = Vec::new();
-	for i in 0..512 {
-    	data.push(i);
-	}
-	merkle_pot::create_proof(data);
-	let end = 0;*/
 }
