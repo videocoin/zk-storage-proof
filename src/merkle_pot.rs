@@ -209,8 +209,6 @@ pub trait PorApi<'a, C: Circuit<Bls12>>: Default {
     fn verify_proof(&mut self, _: &Proof<Bls12>, _: &PreparedVerifyingKey<Bls12>) -> Option<bool>;
 
     fn dump(&mut self);
-    fn write<W: Write>(&self, mut writer: W) -> io::Result<()>;
-    fn read<R: Read>(mut reader: R) -> io::Result<Self>;
 }
 
 //#[derive(RustcDecodable, RustcEncodable)]
@@ -317,29 +315,6 @@ impl<'a> PorApi<'a, ProofOfRetrievability<'a, Bls12>> for MerklePorApp {
             let node = p.unwrap();
             println!("node {:?} {:?}", node.0, node.1);
         };
-    }
-
-    fn write<W: Write>(&self, mut writer: W) -> io::Result<()> {
-        write!(&mut writer, "leaf {:?}\n", self.leaf);
-        //let mut leaf_frrepr: FrRepr = FrRepr::from(self.leaf);
-        //let raw: &[u64] = leaf_frrepr.as_mut();
-        
-        //let witness_encoded = json::encode(&self).unwrap();
-        write!(&mut writer, "raw leaf {:?}\n", FrRepr::from(self.leaf).as_mut());
-        write!(&mut writer, "root {:?}\n", self.root);
-        for p in self.auth_path.clone() {
-            let node = p.unwrap();
-            write!(&mut writer, "node {:?} {:?}\n", node.0, node.1);
-        };
-
-        Ok(())
-    }
-    fn read<R: Read>(mut reader: R) -> io::Result<Self>
-    {
-        let auth_path: Vec<Option<(Fr, bool)>> = vec![None; TREE_DEPTH];
-        let root: Fr = Fr::from_repr(FrRepr::from(0 as u64)).unwrap();
-        let leaf: Fr = Fr::from_repr(FrRepr::from(0 as u64)).unwrap();;
-        Ok(MerklePorApp { auth_path: auth_path, leaf: leaf, root: root })
     }
 }
 

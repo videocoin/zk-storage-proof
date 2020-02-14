@@ -322,7 +322,7 @@ lazy_static! {
     static ref JUBJUB_BLS_PARAMS: JubjubBls12 = JubjubBls12::new();
 }
 
-fn porsetup(crs_path: String)
+fn zkporsetup(crs_path: String)
 {	
 	let now = Instant::now();
 	let mut rng = rand::thread_rng();
@@ -346,7 +346,7 @@ fn get_input_phash(input_file: String) -> Vec<u64>
 	phashes
 }
 
-fn porgenproof(
+fn zkporgenproof(
 	crs_path: String, 
 	proof_path: String, 
 	input_path: String, 
@@ -377,22 +377,33 @@ fn porgenproof(
 	proof.write(&mut proof_f).expect("failed to serialize proof file");
 	
 	// Save witness
-	let mut witness_f = File::create(witness_path).expect("failed to create witness file");
-	por.write(witness_f);
+	//let mut witness_f = File::create(witness_path).expect("failed to create witness file");
+	//por.write(witness_f);
+	save_merkle_proof(witness_path, root, leaf, auth_path);
 	por.dump();
 	println!("Load CRS + Proof generation {}", now.elapsed().as_millis());
 }
 
-fn porverify(crs_path: String, proof_path: String, witness_path: String,)
+fn zkporverify(crs_path: String, proof_path: String, witness_path: String,)
 {
 	let now = Instant::now();	
-
-	let witness_path = Path::new(&crs_path);
 	
 	let mut witness_f = File::open(&witness_path).expect("faild to open ssim_proof.dat file");
 	
 	// Read witness
-	let mut por: merkle_pot::MerklePorApp = merkle_pot::MerklePorApp::read(&mut witness_f).expect("failed to read witness data");
+	//let mut por: merkle_pot::MerklePorApp = merkle_pot::MerklePorApp::read(&mut witness_f).expect("failed to read witness data");
+	//let mut por: merkle_pot::MerklePorApp = merkle_pot::MerklePorApp::default();
+
+	let (root, leaf, auth_path) = load_merkle_proof(witness_path);
+	let mut por = merkle_pot::MerklePorApp{
+		root: Fr::from(root),
+		leaf: Fr::from(leaf),
+		auth_path: vec![],
+	};
+
+	for item in auth_path {
+		por.auth_path.push(Some((Fr::from(item.0), item.1)));
+	}
 
     let groth_params: Parameters<Bls12> = {
 		let f = File::open(&crs_path).expect("failed to open crs file");
@@ -421,8 +432,8 @@ fn main()
 	}
 	
 	match cmd.as_ref() {
-		"setup" => {
-			println!("Setup");
+		"ssimsetup" => {
+			println!("ssimsetup");
 			if args.len() >= 3 {
     			let crs_file = args[2].clone();
 				setup(crs_file)
@@ -431,8 +442,8 @@ fn main()
 				process::exit(1);
 			}			
 		},
-		"genproof" => {
-			println!("genproof");
+		"ssimgenproof" => {
+			println!("ssimgenproof");
 			if args.len() >= 7 {
     			let crs_file = args[2].clone();
 				let proof_file = args[3].clone();
@@ -446,8 +457,8 @@ fn main()
 			}
 
 		},
-		"verify" => {
-			println!("verify");
+		"ssimverify" => {
+			println!("ssimverify");
 			if args.len() >= 5 {
     			let crs_file = args[2].clone();
 				let proof_file = args[3].clone();
@@ -458,39 +469,39 @@ fn main()
 				process::exit(1);
 			}
 		},
-		"porsetup" => {
-			println!("porsetup");
+		"zkporsetup" => {
+			println!("zkporsetup");
 			if args.len() >= 3 {
     			let crs_file = args[2].clone();
-				porsetup(crs_file)
+				zkporsetup(crs_file)
 			} else {
-				println!("zkptrans porsetup crs_file");
+				println!("zkptrans zkporsetup crs_file");
 				process::exit(1);
 			}			
 		},
-		"porgenproof" => {
-			println!("porgenproof");
+		"zkporgenproof" => {
+			println!("zkporgenproof");
 			if args.len() >= 6 {
     			let crs_file = args[2].clone();
 				let proof_file = args[3].clone();
 				let input_file = args[4].clone();
 				let witness_file = args[5].clone();
-				porgenproof(crs_file, proof_file, input_file, witness_file)
+				zkporgenproof(crs_file, proof_file, input_file, witness_file)
 			} else {
-				println!("zkptrans porgenproof crs_file proof_file input_file witness_file");
+				println!("zkptrans zkporgenproof crs_file proof_file input_file witness_file");
 				process::exit(1);
 			}
 
 		},
-		"porverify" => {
-			println!("porverify");
+		"zkporverify" => {
+			println!("zkporverify");
 			if args.len() >= 5 {
     			let crs_file = args[2].clone();
 				let proof_file = args[3].clone();
 				let witness_file = args[4].clone();
-				porverify(crs_file, proof_file, witness_file)
+				zkporverify(crs_file, proof_file, witness_file)
 			} else {
-				println!("zkptrans porverify crs_file proof_file witness_file");
+				println!("zkptrans zkporverify crs_file proof_file witness_file");
 				process::exit(1);
 			}
 		},		
