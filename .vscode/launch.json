@@ -1,0 +1,45 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'zkptrans'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=zkptrans",
+                    "--package=zkptrans"
+                ],
+                "filter": {
+                    "name": "zkptrans",
+                    "kind": "bin"
+                }
+            },
+            "args": ["zkporgenproof", "zkpor_crs.dat", "zkpor_proof.dat", "rust-phash/testout.txt", "zkpor_witness.dat"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'zkptrans'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=zkptrans",
+                    "--package=zkptrans"
+                ],
+                "filter": {
+                    "name": "zkptrans",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
