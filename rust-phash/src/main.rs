@@ -294,85 +294,55 @@ pub fn main()
 {
     let args: Vec<String> = env::args().collect();
 	println!("{:?}", args);
-	let mut cmd: String = "None".to_string();
-	if args.len() > 1 {
-    	cmd = args[1].clone();
-	}
-	match cmd.as_ref() {
-		"file" => {
-			println!("file");
-			if args.len() >= 3 {
-                let input_file = args[2].clone();
-                let output_file = args[3].clone();
-                let frames = gen_phash_multiple_frames_from_file(input_file);
-                let mut phashes: Vec<u64> = Vec::new();
-                for frame in frames {
-                    let frame_f: Vec<f32>  = frame.pixels.iter().map(|x| *x as f32).collect();
-                    //println!("frame={:?}", frame_f);
-                    let dct_width: u32 = DCT_WIDTH;
-                    let dct_height: u32 = DCT_HEIGHT;
-                    let input_len: usize = (dct_width * dct_height) as usize;
 
-                    let ctx = DctCtxt::new(dct_width as usize, dct_height as usize);
-                
-                    let mut vals_with_scratch = Vec::with_capacity(input_len * 2);
-                    vals_with_scratch.extend(frame_f.iter().map(|&val| {
-                        val
-                    }));
+    if args.len() >= 3 {
+        let input_file = args[1].clone();
+        let output_file = args[2].clone();
+        let frames = gen_phash_multiple_frames_from_file(input_file);
+        let mut phashes: Vec<u64> = Vec::new();
+        for frame in frames {
+            let frame_f: Vec<f32>  = frame.pixels.iter().map(|x| *x as f32).collect();
+            //println!("frame={:?}", frame_f);
+            let dct_width: u32 = DCT_WIDTH;
+            let dct_height: u32 = DCT_HEIGHT;
+            let input_len: usize = (dct_width * dct_height) as usize;
 
-                    // Extend with dummy data
-                    vals_with_scratch.extend(frame_f.iter().map(|&val| {
-                        val
-                    }));
+            let ctx = DctCtxt::new(dct_width as usize, dct_height as usize);
+        
+            let mut vals_with_scratch = Vec::with_capacity(input_len * 2);
+            vals_with_scratch.extend(frame_f.iter().map(|&val| {
+                val
+            }));
 
-                    let dct_vals = ctx.dct_2d(vals_with_scratch);
-                    //println!("dct len={} {:?}", dct_vals.len(), dct_vals);
-                    let cropped_dct =crop_2d_dct(dct_vals, DCT_WIDTH as usize, 4);
-                    //println!("cropped dct: len={} {:?}", cropped_dct.len(), cropped_dct);
-                    let hash: Vec<u8> = BitSet::from_bools(mean_hash_f32(&cropped_dct));
-                    println!("hash: len={} {:?}", hash.len(), hash);
+            // Extend with dummy data
+            vals_with_scratch.extend(frame_f.iter().map(|&val| {
+                val
+            }));
 
-                    let phash64 = unsafe { std::mem::transmute::<[u8; 8], u64>([hash[0],hash[1],hash[2],hash[3],hash[4],hash[5],hash[6],hash[7]]) }.to_le();
+            let dct_vals = ctx.dct_2d(vals_with_scratch);
+            //println!("dct len={} {:?}", dct_vals.len(), dct_vals);
+            let cropped_dct =crop_2d_dct(dct_vals, DCT_WIDTH as usize, 4);
+            //println!("cropped dct: len={} {:?}", cropped_dct.len(), cropped_dct);
+            let hash: Vec<u8> = BitSet::from_bools(mean_hash_f32(&cropped_dct));
+            println!("hash: len={} {:?}", hash.len(), hash);
 
-                    phashes.push(phash64);
-                }
-                
-                if(phashes.len() > 0) {
-                    let phashes_out = PHashes {
-                        phashes: phashes,
-                    };
-                    let mut phashes_f = File::create(&output_file).expect("faild to create output file");
-                    let phashes_encoded = json::encode(&phashes_out).unwrap();
-                    phashes_f.write_all(phashes_encoded.as_bytes());
-                }
+            let phash64 = unsafe { std::mem::transmute::<[u8; 8], u64>([hash[0],hash[1],hash[2],hash[3],hash[4],hash[5],hash[6],hash[7]]) }.to_le();
 
-			} else {
-				println!("rust-phash input_file output_file");
-				process::exit(1);
-			}			
-        },
-		_ => println!("Unknown command\n "),
-	}        
- /*
-    let mut rng = rand::thread_rng();
-    let dct_width: u32 = DCT_WIDTH;
-    let dct_height: u32 = DCT_HEIGHT;
-    let input_len: usize = (dct_width * dct_height) as usize;
-    let mut data: Vec<f32> = Vec::new();
-    for i in 0..input_len * 2 {
-        data.push(rng.gen::<f32>());
-    }
-    let ctx = DctCtxt::new(dct_width as usize, dct_height as usize);
+            phashes.push(phash64);
+        }
+        
+        if(phashes.len() > 0) {
+            let phashes_out = PHashes {
+                phashes: phashes,
+            };
+            let mut phashes_f = File::create(&output_file).expect("faild to create output file");
+            let phashes_encoded = json::encode(&phashes_out).unwrap();
+            phashes_f.write_all(phashes_encoded.as_bytes());
+        }
 
-    let mut vals_with_scratch = Vec::with_capacity(input_len * 2);
-    vals_with_scratch.extend(data.iter().map(|&val| {
-        val
-    }));
-    let dct_vals = ctx.dct_2d(vals_with_scratch);
-    println!("dct len={} {:?}", dct_vals.len(), dct_vals);
-    let cropped_dct =crop_2d_dct(dct_vals, DCT_WIDTH as usize, 4);
-    println!("cropped dct: len={} {:?}", cropped_dct.len(), cropped_dct);
-    let hash: Vec<u8> = BitSet::from_bools(mean_hash_f32(&cropped_dct));
-    println!("hash: len={} {:?}", hash.len(), hash);
- */ 
+    } else {
+        println!("rust-phash input_file output_file");
+        process::exit(1);
+    }			
+    
 }

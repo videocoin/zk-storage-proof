@@ -364,7 +364,7 @@ fn zkporgenproof(
 	
 	// data
 	let data: Vec<u64> = get_input_phash(input_path);
-	let (auth_path, leaf, root) = merkle_pot::merkel_path(data);
+	let (auth_path, leaf, root, _) = merkle_pot::merkel_path(data);
 		
 	let proof_start = Instant::now();	
 	
@@ -583,7 +583,8 @@ fn main()
 			for i in 0..512 {
 				data.push(i);
 			}
-			merkle_pot::test_zkpor(data);
+			//merkle_pot::test_zkpor(data);
+			merkle_pot::create_proof(data);
 			let end = 0;
 		
 		},			
