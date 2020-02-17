@@ -34,7 +34,71 @@ Each software component listed above is implemented and being tested.
 ## Challenges:
 VideoCoin blockchain uses precompiled contracts based on alt-bn256 curves  to support zkSnark proof-verification. Proof-of-storage implementation for VideoCoin is based on libraries using Jubjub/twisted Edwards curves. We need to extend VideoCoin blockchain to add new precompiled contracts (which requires go-videocoin calling external rust library) or run a oraclized verifier.
 
+## Build
+### building zksnarks storage proof-of-retrievability modules
+create a project folder (for example dev in home folder)
+```
+mkdir ~/dev
+```
+Download this repo in to the folder
+```
+git clone git clone https://github.com/videocoin/zk-storage-proof.git
+```
+
+Download this filecoin proof system in to the parent folder containing zk-storage-proof (to satisfy the dependency paths)
+```
+git clone https://github.com/filecoin-project/rust-fil-proofs.git
+git checkout f563bf3725e44c1f
+```
+Build storage POR libraries
+```
+cd  ~/dev/zk-storage-proof
+cargo build --release
+```
+binary will be located in ~/dev/zk-storage-proof/target/release/zkptrans
+A binary extract-frame is created.
+### build ffmpeg custom application for extracting frames
+```
+cd ~/dev/zk-storage-proof/viddec
+sudo apt-get install  libavcodec-dev  libavfilter-dev  libavformat-dev libavresample-dev libavutil-dev  libswscale-dev
+make
+```
+
+### build phash libraries
+```
+cd ~/dev/zk-storage-proof/rust-phash
+corgo build --release
+```
+binary will be located in ~/dev/zk-storage-proof/target/release/rust-phash
+
 ## Testing 
+### phash-merkle-zksnarks
+mkdir ~/test
+cd ~/dev/zk-storage-proof
+
+Setup (generation of CRS 
+```
+target/release/zkptrans zkporsetup ~/test/zkpor_crs.dat
+```
+Extract video frames(Y or Luma): The following command extracts 300 frames and scales to 32x32 pixes. 
+```
+./viddec/extract-frame -f 0 -c 300 --scale --input ~/test/bb_test_1080p_120s.mp4 --output ~/test/scaled-frames.txt
+```
+Then generate phashes for the frames
+```
+./rust-phash/target/release/rust-phash ~/test/scaled-frames.txt ~/test/phashes.txt
+```
+
+Proof generation: Generate merkletree-zksnarks proof for the phashes generated in the previous step
+```
+target/release/zkptrans zkporgenproof ~/test/zkpor_crs.dat ~/test/zkpor_proof.dat ~/test/phashes.txt ~/test/zkpor_witness.daRUST_BACKTRACE=1 cargo run genproof ssim_crs.dat ssim_proof.dat input1.json input2.json witness.dat
+```
+Verification: Verify the proof prodcuced in th previous step
+```
+target/release/zkptrans zkporverify ~/test/zkpor_crs.dat ~/test/zkpor_proof.dat  ~/test/zkpor_witness.dat
+```
+
+
 ### SSIM
 
 Download this repo, and filecoin repo as explained above. 
