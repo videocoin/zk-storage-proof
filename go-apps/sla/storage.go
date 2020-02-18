@@ -25,5 +25,5 @@ type ZkPublicInput struct {
 }
 
 type ZkVerifyResult struct {
-	Result string
+	Result string `json:"result"`
 }

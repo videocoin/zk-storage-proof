@@ -34,6 +34,7 @@ use std::process;
 use rustc_serialize::json::Json;
 use rustc_serialize::json;
 use fil_sapling_crypto::jubjub::{JubjubBls12, JubjubEngine, edwards::Point};
+use log::{info, trace, warn};
 
 //mod macroblock;
 mod pixel;
@@ -145,7 +146,7 @@ fn load_merkle_proof(proof_file: String) -> ( PedersenDomain, PedersenDomain, Ve
 	let mut data = String::new();
 	proof_f.read_to_string(&mut data);
 	let proof: VcMerkleProof = serde_json::from_str(&data).unwrap();
-	println!("proof={:?}", data);
+	info!("proof={:?}", data);
 
 	//let auth_path: Vec<Option<(Fr, bool)>> = vec![];
 	let mut auth_path: Vec<(PedersenDomain, bool)> = vec![];
@@ -156,10 +157,10 @@ fn load_merkle_proof(proof_file: String) -> ( PedersenDomain, PedersenDomain, Ve
 		let item = node.unwrap();
 		auth_path.push((item.0, item.1));
 	}
-	println!("leaf: {:?}", leaf);
-	println!("root: {:?}", root);
+	info!("leaf: {:?}", leaf);
+	info!("root: {:?}", root);
 	for item in auth_path.clone() {
-		println!("{:?}", item);
+		info!("{:?}", item);
 	}
 	(root, leaf, auth_path)
 }
@@ -269,7 +270,7 @@ fn get_witness(witness_path: String) -> Vec<u32> {
 	selected_fields.push(witness.sigma_y);
 	selected_fields.push(witness.ssim_numerator);
 	selected_fields.push(witness.ssim_denom);
-	println!("witness {:?}", selected_fields);
+	info!("witness {:?}", selected_fields);
 	selected_fields
 }
 
@@ -413,6 +414,11 @@ fn zkporgenproof(
 	println!("Load CRS + Proof generation {}", now.elapsed().as_millis());
 }
 
+#[derive(Serialize, Deserialize)]
+struct ZkPorVerifyResult {
+	result: String
+}
+
 fn zkporverify(crs_path: String, proof_path: String, witness_path: String,)
 {
 	let now = Instant::now();	
@@ -422,6 +428,10 @@ fn zkporverify(crs_path: String, proof_path: String, witness_path: String,)
 	// Read witness
 	//let mut por: merkle_pot::MerklePorApp = merkle_pot::MerklePorApp::read(&mut witness_f).expect("failed to read witness data");
 	//let mut por: merkle_pot::MerklePorApp = merkle_pot::MerklePorApp::default();
+	
+	let  mut result = ZkPorVerifyResult {
+		result: "false".to_string(),
+	};
 
 	let (root, leaf, auth_path) = load_merkle_proof(witness_path);
 	let mut por = merkle_pot::MerklePorApp{
@@ -446,9 +456,15 @@ fn zkporverify(crs_path: String, proof_path: String, witness_path: String,)
 
 	let verify_start = Instant::now();	
 	let res = por.verify_proof(&proof, &pvk).unwrap();
-	println!("Verificaiton result = {:?}", res);
-	println!("Only Verification {}", verify_start.elapsed().as_millis());	
-	println!("Load Proof+Verification {}", now.elapsed().as_millis());	
+	if(res == true) {
+		result.result = "true".to_string();
+	}
+	let ser = serde_json::to_string(&result).unwrap();
+	println!("{:?}",ser);
+
+	info!("Verificaiton result = {:?}", res);
+	info!("Only Verification {}", verify_start.elapsed().as_millis());	
+	info!("Load Proof+Verification {}", now.elapsed().as_millis());	
 }
 
 fn main()
@@ -532,7 +548,7 @@ fn main()
 
 		},
 		"zkporverify" => {
-			println!("zkporverify");
+			info!("zkporverify");
 			if args.len() >= 5 {
     			let crs_file = args[2].clone();
 				let proof_file = args[3].clone();

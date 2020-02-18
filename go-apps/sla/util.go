@@ -70,7 +70,7 @@ func GetCommittedProof(sla_id string) ZkMerkleProof {
 	var proof ZkMerkleProof
 	err = json.Unmarshal(b1.Bytes(), &proof)
 	if err != nil {
-		fmt.Println("Error while getting sla: ", err)
+		fmt.Println("Error while getting commit: ", err)
 		os.Exit(1)
 	}
 
