@@ -15,11 +15,15 @@ type SlaStorage struct {
 }
 
 type ZkMerkleProof struct {
-	Proof string // 192 byte
+	Proof string `json:"proof"` // 192 byte
 }
 
 type ZkPublicInput struct {
-	Leaf string
-	Root string
-	Path string
+	Leaf      string `json:"leaf"`
+	Root      string `json:"root"`
+	Auth_Path string `json:"auth_path"`
+}
+
+type ZkVerifyResult struct {
+	Result string
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"os"
 	"os/exec"
 	"os/user"
 
@@ -16,23 +17,25 @@ import (
 
 func main() {
 	usr, _ := user.Current()
-	binFolder := flag.String("bin", "/usr/bin/", "folder zktrans containing binaries")
 	workFolder := flag.String("work", usr.HomeDir+"/test/", "folder containing intermediate files")
-	sla_id := flag.String("sla-id", "test slaid", "sla id")
+	sla_id := flag.String("sla", "", "sla id")
 	flag.Parse()
-
-	// sla_id
-	// TODO: Get Storage Sla and Get URL
-	fmt.Println("Args ", *sla_id)
-
-	// Create request
-	slaStorage := sla.SlaStorage{
-		Url:          "/tmp/testclips/test1.mp4",
-		ProofType:    sla.ProofPhashMerkleZksnark,
-		PublicInputs: "",
+	// Prepare output folder
+	if _, err := os.Stat(*workFolder); os.IsNotExist(err) {
+		os.Mkdir(*workFolder, 0777)
 	}
+
+	if *sla_id == "" {
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
+	//
+	// Get the SLA corresponding to sla-id
+	//
+	slaStorage := sla.GetSla(*sla_id)
 	input := slaStorage.Url
-	cmd := exec.Command(*binFolder+"extract-frame", "-f", "0", "-c", "300", "--scale", "--input", input, "--output", *workFolder+"scaled-frames.txt")
+	cmd := exec.Command("extract-frame", "-f", "0", "-c", "300", "--scale", "--input", input, "--output", *workFolder+"scaled-frames.txt")
 	//stdout, err := cmd.StdoutPipe()
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
@@ -44,7 +47,7 @@ func main() {
 
 	cmd.Wait()
 
-	cmd = exec.Command(*binFolder+"rust-phash", *workFolder+"scaled-frames.txt", *workFolder+"phashes.txt")
+	cmd = exec.Command("rust-phash", *workFolder+"scaled-frames.txt", *workFolder+"phashes.txt")
 	//stdout, err := cmd.StdoutPipe()
 	stderr, err = cmd.StderrPipe()
 	if err != nil {
@@ -57,7 +60,7 @@ func main() {
 	cmd.Wait()
 
 	// zksnarks proof
-	cmd = exec.Command(*binFolder+"zkptrans", "zkporgenproof", *workFolder+"zkpor_crs.dat", *workFolder+"zkpor_proof.dat", *workFolder+"phashes.txt", *workFolder+"zkpor_witness.txt")
+	cmd = exec.Command("zkptrans", "zkporgenproof", *workFolder+"zkpor_crs.dat", *workFolder+"zkpor_proof.dat", *workFolder+"phashes.txt", *workFolder+"zkpor_witness.dat")
 	//stdout, err := cmd.StdoutPipe()
 	stderr, err = cmd.StderrPipe()
 	if err != nil {

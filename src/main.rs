@@ -342,8 +342,41 @@ fn get_input_phash(input_file: String) -> Vec<u64>
 
 	let phashes_in:  PHashes = json::decode(&data).unwrap();
 	let phashes =  phashes_in.phashes.iter().map(|x| *x as u64).collect();
-	println!("phashes={:?}", phashes);
+	//println!("phashes={:?}", phashes);
 	phashes
+}
+
+#[derive(Serialize, Deserialize)]
+struct VcMerkleChallenge {
+    leaf: PedersenDomain,
+	root: PedersenDomain,
+	auth_path: Vec<bool>
+}
+
+fn zkporchallenge(
+	input_path: String,)
+{	
+	let now = Instant::now();
+
+	let mut por = merkle_pot::MerklePorApp::default();
+	
+	// data
+	let data: Vec<u64> = get_input_phash(input_path);
+	let (auth_path, leaf, root, _) = merkle_pot::merkel_path(data);
+	
+	let mut challenge = VcMerkleChallenge{
+		leaf: PedersenDomain(FrRepr::from(leaf)),
+		root: PedersenDomain(FrRepr::from(root)),
+		auth_path: vec![],
+	};
+
+	for node in auth_path {
+		let item  = node.unwrap();
+		challenge.auth_path.push(item.1);
+	}
+
+	let ser = serde_json::to_string(&challenge).unwrap();
+	println!("{:?}",ser);
 }
 
 fn zkporgenproof(
@@ -421,7 +454,6 @@ fn zkporverify(crs_path: String, proof_path: String, witness_path: String,)
 fn main()
 {
 	let args: Vec<String> = env::args().collect();
-	println!("{:?}", args);
 	let mut cmd: String = "None".to_string();
 	if args.len() > 1 {
     	cmd = args[1].clone();
@@ -475,6 +507,16 @@ fn main()
 				process::exit(1);
 			}			
 		},
+		"zkporchallenge" => {
+			if args.len() >= 3 {
+				let input_file = args[2].clone();
+				zkporchallenge(input_file)
+			} else {
+				println!("zkptrans zkporchallenge input_file");
+				process::exit(1);
+			}
+
+		},		
 		"zkporgenproof" => {
 			println!("zkporgenproof");
 			if args.len() >= 6 {
