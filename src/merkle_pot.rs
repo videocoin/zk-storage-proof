@@ -83,6 +83,7 @@ impl<'a, E: JubjubEngine> Circuit<E> for ProofOfRetrievability<'a, E> {
 
         // Allocate the "real" root that will be exposed.
         let rt = num::AllocatedNum::alloc(cs.namespace(|| "root value"), || {
+            info!("\nroot: {:?}\n", real_root_value);
             real_root_value.ok_or(SynthesisError::AssignmentMissing)
         })?;
 
@@ -93,6 +94,7 @@ impl<'a, E: JubjubEngine> Circuit<E> for ProofOfRetrievability<'a, E> {
         let auth_path = self.auth_path.clone();
 
         let value_num = num::AllocatedNum::alloc(cs.namespace(|| "value"), || {
+            info!("\nleaf: {:?}\n", value);
             value.ok_or_else(|| SynthesisError::AssignmentMissing)
         })?;
 
@@ -119,6 +121,7 @@ impl<'a, E: JubjubEngine> Circuit<E> for ProofOfRetrievability<'a, E> {
             // at this depth.
             let path_element =
                 num::AllocatedNum::alloc(cs.namespace(|| "path element"), || {
+                    info!("\nnode: {:?}\n", e);
                     Ok(e.ok_or(SynthesisError::AssignmentMissing)?.0)
                 })?;
 
@@ -287,16 +290,13 @@ impl<'a> PorApi<'a, ProofOfRetrievability<'a, Bls12>> for MerklePorApp {
 
         let auth_path = self.auth_path.clone();
 
-        // regen values, avoids storing
-        let value = Some(&self.leaf);
-
         let mut expected_inputs: Vec<Fr>;
 
 		let auth_path_bits: Vec<bool> = auth_path.iter().map(|p| p.unwrap().1).collect();        
 		let packed_auth_path: Vec<Fr> =
                     multipack::compute_multipacking::<Bls12>(&auth_path_bits);
 
-		let mut input = vec![*value.unwrap()];
+		let mut input = vec![self.leaf];
         input.extend(packed_auth_path);
         expected_inputs = input;
 
@@ -328,9 +328,9 @@ fn work_groth(
 ) {
     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
 
-    //info!(SP_LOG, "tree_depth: {}", tree_depth; "target" => "config");
-
-	let (auth_path, leaf, root) = (_auth_path, _leaf, _root);
+    instance.auth_path = _auth_path;
+    instance.leaf = _leaf;
+    instance.root = _root;
 
     let start = Instant::now();
     let mut param_duration = Duration::new(0, 0);
@@ -338,7 +338,7 @@ fn work_groth(
     let name = MerklePorApp::name();
 
     // caching
-    let p = get_cache_path(4);
+    let p = get_cache_path(5);
     println!("crs path {}", p);
     
     let cache_path = Path::new(&p);
@@ -364,6 +364,13 @@ fn work_groth(
     //info!(SP_LOG, "generating verification key"; "target" => "params");
     let pvk = prepare_verifying_key(&groth_params.vk);
 
+    // dump vk
+    info!("\nvk.ic.len: {:?}\n", groth_params.vk.ic.len());
+    info!("\nvk.ic: {:?}\n", groth_params.vk.ic);
+    info!("vk.alpha_g1: {:?}\n", groth_params.vk.alpha_g1);
+    info!("vk.beta_g2: {:?}\n", groth_params.vk.beta_g2);
+    info!("vk.vk.vk.gamma_g2: {:?}\n", groth_params.vk.beta_g2);    
+    info!("vk.vk.vk.delta_g2: {:?}\n", groth_params.vk.delta_g2);    
     param_duration += start.elapsed();
 
     let mut proof_vec = vec![];
@@ -380,23 +387,19 @@ fn work_groth(
         rng,
         &JUBJUB_BLS_PARAMS,
         &groth_params,
-		auth_path.clone(),
-		leaf,
-		root,
+		instance.auth_path.clone(),
+		instance.leaf,
+		instance.root,
     );
     proof.write(&mut proof_vec).expect("failed to serialize proof");
+    info!("\nproof_vec: {:?}\n", proof_vec);
     total_proving += start.elapsed();
     // -- verify proof
 
     let start = Instant::now();
 
-    if let Some(is_valid) = instance.verify_proof(&proof, &pvk) {
-        //assert!(is_valid, "failed to verify proof");
-        info!("verify_proof : failed");
-    } else {
-        info!("verify_proof : success");
-    }
-
+    let is_valid = instance.verify_proof(&proof, &pvk);
+    info!("Verification result={:?}", is_valid);
     total_verifying += start.elapsed();
 
 
@@ -418,13 +421,11 @@ fn work_groth(
 
 pub fn merkel_path(
 	data: Vec<u64>,
-) -> (Vec<Option<(Fr, bool)>>, Fr, Fr, usize) {
+) -> (Vec<Option<(Fr, bool)>>, Fr, Fr) {
     let challenge_leaf_index = 3;
     info!( "challenge_leaf_index {}", challenge_leaf_index);
 	let leaves: Vec<Fr> = data.iter().map(|x| (Fr::from_repr(FrRepr::from(*x as u64))).unwrap()).collect();
-	let tree_depth = (leaves.len() as f64).log2().ceil() as usize;
-    //let leaf = leaves[challenge_leaf_index];
-    info!( "MerkleTree from_data tree_depth={}", tree_depth);
+	
 	let merk_tree = MerkleTree::<PedersenDomain, PedersenFunction>::from_data(leaves);
 
     // generate merkle path for challenged node and parents
@@ -434,22 +435,24 @@ pub fn merkel_path(
 	let root : Fr  = merk_tree.root().into();
 	let leaf : Fr = merk_tree.read_at(challenge_leaf_index).into();
 
-	(auth_path, leaf, root, tree_depth)
+	(auth_path, leaf, root)
 }
 
 
-pub fn create_proof(data: Vec<u64>) {
+pub fn test_zkpor(data: Vec<u64>) {
     env_logger::init();
 
     info!( "MerklePorApp::default(");
-    let instance = MerklePorApp::default();
+    let mut instance = MerklePorApp::default();
     info!( "merkel_path");
     let start = Instant::now();
-    let (auth_path, leaf, root, tree_depth) = merkel_path(data);
+    let tree_depth = (data.len() as f64).log2().ceil() as usize;
+    let (auth_path, leaf, root) = merkel_path(data);
     let merkle_creation_duration = start.elapsed();
     let merkle_creation_duration = f64::from(merkle_creation_duration.subsec_nanos()) / 1_000_000_000f64
         + (merkle_creation_duration.as_secs() as f64);
     info!( "merkle_creation_duration {}", merkle_creation_duration);
     info!( "work_groth");
+    instance.dump();
 	work_groth(instance, tree_depth, auth_path.clone(), leaf, root);
 }

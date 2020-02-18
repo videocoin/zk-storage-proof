@@ -1,0 +1,25 @@
+#setup test folder
+mkdir /tmp/test
+
+#copy a h.264 test clip to test folder: /tmp/test/test1.mp4
+# copy the following binaries to a folder in the linux PATH, for example /usr/bin
+# extract-frame, rust-phash, zkptrans
+
+# One-time zksnarks setup. Run setup and generate CRS
+zkptrans zkporsetup /tmp/test/zkpor_crs.dat
+
+# 1. extract frames
+extract-frame --frame 0 --count 300 --scale --input /tmp/test/test1.mp4 --output /tmp/test/scaled-frames.json
+
+# 2. generate phashes
+rust-phash /tmp/test/scaled-frames.json /tmp/test/phashes.json
+
+
+# 3. Generate challenge. Publisher use this to generate zksnarks public inputs after running steps 1,2
+zkptrans zkporchallenge /tmp/test/phashes.json > challenge.json
+
+# 4. generate proof. Worker use this to generate proof after running steps 1,2
+zkptrans zkporgenproof /tmp/test/zkpor_crs.dat /tmp/test/zkpor_proof.dat /tmp/test/phashes.json /tmp/test/witness.json
+
+# 5. Verify proof using public input supplied by publsiher. 
+zkptrans zkporverify /tmp/test/zkpor_crs.dat /tmp/test/zkpor_proof.dat /tmp/test/witness.json
