@@ -1,3 +1,5 @@
+######### Module level testing ##################
+
 #setup test folder
 mkdir /tmp/test
 
@@ -23,3 +25,27 @@ zkptrans zkporgenproof /tmp/test/zkpor_crs.dat /tmp/test/zkpor_proof.dat /tmp/te
 
 # 5. Verify proof using public input supplied by publsiher. 
 zkptrans zkporverify /tmp/test/zkpor_crs.dat /tmp/test/zkpor_proof.dat /tmp/test/witness.json
+
+
+######### Integration testing with blockchain ##################
+
+# setup
+# ~/test/ is used as a scratch folder for the following command.
+# This folder should contain zkpor_crs.dat that was created during zksnarks output
+
+# 1. Publisher generates a challnge for a stream(-input) and also specifies the storage location(-output).
+#    The command generates an SLA and registers with the blockchain 
+./publisher -input /tmp/test/test1.mp4 -output /tmp/test/test1.mp4
+
+# 2. query the registered SLAs
+vccli q sla list
+
+# 3. Miner generates proof the stream pointed by SLA and commits to the blockchain
+#    The command extractes frames, generates pahshes and then generates zksnarks merkle-proof 
+./miner -sla "IUf6pwPjCVYo4xRF3NoQdz01xAEuyHxBGBBl5DApz-E="
+
+# 4. query commit. 
+vccli q sla commit "IUf6pwPjCVYo4xRF3NoQdz01xAEuyHxBGBBl5DApz-E="
+
+# 5. Verify
+./verify -sla "IUf6pwPjCVYo4xRF3NoQdz01xAEuyHxBGBBl5DApz-E="
