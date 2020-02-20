@@ -21,6 +21,7 @@ use rand::thread_rng;
 
 use storage_proofs::hasher::pedersen::{PedersenDomain, PedersenFunction, PedersenHasher};
 use storage_proofs::merkle::{MerkleProof, MerkleTree};
+use storage_proofs::settings;
 
 use std::io::{self, Read, Write};
 
@@ -180,8 +181,18 @@ fn get_cache_path(
     )
 }
 
+/*
 lazy_static! {
     static ref JUBJUB_BLS_PARAMS: JubjubBls12 = JubjubBls12::new();
+}
+*/
+lazy_static! {
+    static ref JUBJUB_BLS_PARAMS: JubjubBls12 = JubjubBls12::new_with_window_size(
+        settings::SETTINGS
+            .lock()
+            .unwrap()
+            .pedersen_hash_exp_window_size
+    );
 }
 
 /// A trait that makes it easy to implement "Examples". These are really tunable benchmarking CLI tools.
@@ -309,11 +320,11 @@ impl<'a> PorApi<'a, ProofOfRetrievability<'a, Bls12>> for MerklePorApp {
 
     fn dump(&mut self)
     {
-        println!("leaf {:?}", self.leaf);
-        println!("root {:?}", self.root);
+        info!("leaf {:?}", self.leaf);
+        info!("root {:?}", self.root);
         for p in self.auth_path.clone() {
             let node = p.unwrap();
-            println!("node {:?} {:?}", node.0, node.1);
+            info!("node {:?} {:?}", node.0, node.1);
         };
     }
 }
@@ -327,10 +338,6 @@ fn work_groth(
 	_root: Fr,
 ) {
     let rng = &mut XorShiftRng::from_seed([0x3dbe6259, 0x8d313d76, 0x3237db17, 0xe5bc0654]);
-
-    instance.auth_path = _auth_path;
-    instance.leaf = _leaf;
-    instance.root = _root;
 
     let start = Instant::now();
     let mut param_duration = Duration::new(0, 0);
@@ -422,12 +429,11 @@ fn work_groth(
 pub fn merkel_path(
 	data: Vec<u64>,
 ) -> (Vec<Option<(Fr, bool)>>, Fr, Fr) {
-    let challenge_leaf_index = 3;
+    let challenge_leaf_index = 1;
     info!( "challenge_leaf_index {}", challenge_leaf_index);
-	let leaves: Vec<Fr> = data.iter().map(|x| (Fr::from_repr(FrRepr::from(*x as u64))).unwrap()).collect();
-	
-	let merk_tree = MerkleTree::<PedersenDomain, PedersenFunction>::from_data(leaves);
-
+	let mut leaves: Vec<Fr> = data.iter().map(|x| (Fr::from_repr(FrRepr::from(*x as u64))).unwrap()).collect();
+ 	let merk_tree = MerkleTree::<PedersenDomain, PedersenFunction>::from_data(leaves);
+    info!( "merk_tree height {}", merk_tree.height());
     // generate merkle path for challenged node and parents
     info!( "merk_proof auth_path");
     let merk_proof =  MerkleProof::<PedersenHasher>::new_from_proof(&merk_tree.gen_proof(challenge_leaf_index));
@@ -443,16 +449,23 @@ pub fn test_zkpor(data: Vec<u64>) {
     env_logger::init();
 
     info!( "MerklePorApp::default(");
-    let mut instance = MerklePorApp::default();
+
     info!( "merkel_path");
     let start = Instant::now();
     let tree_depth = (data.len() as f64).log2().ceil() as usize;
+    info!( "test_zkpor tree_depth {}", tree_depth);
     let (auth_path, leaf, root) = merkel_path(data);
     let merkle_creation_duration = start.elapsed();
     let merkle_creation_duration = f64::from(merkle_creation_duration.subsec_nanos()) / 1_000_000_000f64
         + (merkle_creation_duration.as_secs() as f64);
     info!( "merkle_creation_duration {}", merkle_creation_duration);
     info!( "work_groth");
+
+    let mut instance = MerklePorApp{
+        auth_path : auth_path.clone(),
+        leaf: leaf,
+        root: root,
+    };   
     instance.dump();
 	work_groth(instance, tree_depth, auth_path.clone(), leaf, root);
 }
